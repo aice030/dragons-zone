@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dragons.core.dao.TreeHoleMessageVisibleMapper">
+
+    <resultMap id="TreeHoleMessageItemResultMap" type="com.dragons.core.dto.TreeHoleMessagePageResult$TreeHoleMessageItem">
+        <id column="id" property="id"/>
+        <result column="senderId" property="senderId"/>
+        <result column="content" property="content"/>
+        <result column="state" property="state"/>
+    </resultMap>
+
+    <!-- 分享收件箱：联表查询 tree_hole_message_visible + tree_hole_message，只返回未删除的留言 -->
+    <select id="selectSharedMessageItems" resultMap="TreeHoleMessageItemResultMap">
+        SELECT m.id, m.sender_id AS senderId, m.content, m.state
+        FROM tree_hole_message_visible v
+        INNER JOIN tree_hole_message m ON v.message_id = m.id
+        WHERE v.owner_id = #{ownerId}
+          AND (m.state IS NULL OR m.state != 2)
+        ORDER BY v.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countSharedMessages" resultType="long">
+        SELECT COUNT(*)
+        FROM tree_hole_message_visible v
+        INNER JOIN tree_hole_message m ON v.message_id = m.id
+        WHERE v.owner_id = #{ownerId}
+          AND (m.state IS NULL OR m.state != 2)
+    </select>
+
+</mapper>
+

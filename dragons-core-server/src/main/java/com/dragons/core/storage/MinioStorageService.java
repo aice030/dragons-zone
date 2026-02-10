@@ -1,0 +1,119 @@
+package com.dragons.core.storage;
+
+import com.dragons.core.dto.ResponseCode;
+import com.dragons.core.exception.BusinessException;
+import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
+import io.minio.StatObjectArgs;
+import io.minio.http.Method;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.ByteArrayInputStream;
+
+/**
+ * MinIO 存储实现
+ *
+ * @author aice
+ * @since 2026-01-21
+ */
+@Service
+public class MinioStorageService implements StorageService {
+
+    private final MinioClient minioClient;
+    private final String bucket;
+
+    @Autowired
+    public MinioStorageService(MinioClient minioClient, @Value("${minio.bucket}") String bucket) {
+        this.minioClient = minioClient;
+        this.bucket = bucket;
+    }
+
+    @Override
+    public void upload(MultipartFile file, String objectName) {
+        try {
+            minioClient.putObject(
+                    PutObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(objectName)
+                            .contentType(file.getContentType())
+                            .stream(file.getInputStream(), file.getSize(), -1)
+                            .build()
+            );
+        } catch (Exception e) {
+            // 打印详细错误信息，便于调试
+            e.printStackTrace();
+            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        }
+    }
+
+    @Override
+    public void upload(byte[] fileBytes, String contentType, String objectName) {
+        try {
+            minioClient.putObject(
+                    PutObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(objectName)
+                            .contentType(contentType)
+                            .stream(new ByteArrayInputStream(fileBytes), fileBytes.length, -1)
+                            .build()
+            );
+        } catch (Exception e) {
+            // 打印详细错误信息，便于调试
+            e.printStackTrace();
+            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        }
+    }
+
+    @Override
+    public void delete(String objectName) {
+        try {
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(objectName)
+                            .build()
+            );
+        } catch (Exception e) {
+            // 回滚删除失败：这里不再抛异常，避免覆盖原始业务错误
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public boolean exists(String objectName) {
+        try {
+            minioClient.statObject(
+                    StatObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(objectName)
+                            .build()
+            );
+            return true;
+        } catch (Exception e) {
+            // 文件不存在或其他错误，返回false
+            return false;
+        }
+    }
+
+    @Override
+    public String getPresignedUrl(String objectName, int expirySeconds) {
+        try {
+            return minioClient.getPresignedObjectUrl(
+                    GetPresignedObjectUrlArgs.builder()
+                            .method(Method.GET)
+                            .bucket(bucket)
+                            .object(objectName)
+                            .expiry(expirySeconds)
+                            .build()
+            );
+        } catch (Exception e) {
+            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        }
+    }
+}
+

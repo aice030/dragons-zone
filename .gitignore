@@ -1,0 +1,52 @@
+# 通用
+.vscode/
+.DS_Store
+*.log
+logs/
+*.swp
+*.swo
+*~
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Java / Maven（dragons-core-server）
+HELP.md
+dragons-core-server/postman_test_plan.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+pom.xml.tag
+pom.releaseBackup
+*.releaseBackup
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# 本地敏感配置（勿提交）；application-example.yml 会提交，供读者参考
+**/application.yml

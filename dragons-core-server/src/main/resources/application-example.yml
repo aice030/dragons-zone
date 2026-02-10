@@ -1,0 +1,30 @@
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: 你的数据库连接url（如 jdbc:mysql://主机:端口/库名?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8）
+    username: 你的数据库用户名
+    password: 你的数据库密码
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 1GB        # 单个文件最大 1GB
+      max-request-size: 1GB     # 整个请求最大 1GB
+
+# MyBatis-Plus基本配置
+mybatis-plus:
+  type-aliases-package: com.dragons.core.entity
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+# JWT配置
+jwt:
+  secret: 你的JWT密钥（生产环境请使用足够长且随机的字符串）
+  expiration: 604800000  # 过期时间（毫秒），如 7 天
+
+# MinIO 配置
+minio:
+  endpoint: 你的MinIO服务地址（如 http://localhost:9000）
+  access-key: 你的MinIO访问键
+  secret-key: 你的MinIO私钥
+  bucket: 你的存储桶名称

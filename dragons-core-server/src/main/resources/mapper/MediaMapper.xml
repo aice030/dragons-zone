@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dragons.core.dao.MediaMapper">
+
+    <!-- 专区列表：INNER JOIN media_visible，利用 (user_id, media_id) 索引与 media 主键 -->
+    <select id="countMediaInZone" resultType="long">
+        SELECT COUNT(*)
+        FROM media m
+        INNER JOIN media_visible mv ON m.id = mv.media_id AND mv.user_id = #{zoneUserId}
+        WHERE m.state = 0
+        <if test="category != null">
+            AND m.category = #{category}
+        </if>
+    </select>
+
+    <select id="listMediaInZone" resultType="com.dragons.core.entity.Media">
+        SELECT m.id, m.uploader_id, m.file_hash, m.category, m.title, m.description,
+               m.storage_path, m.cover_path, m.state, m.update_time
+        FROM media m
+        INNER JOIN media_visible mv ON m.id = mv.media_id AND mv.user_id = #{zoneUserId}
+        WHERE m.state = 0
+        <if test="category != null">
+            AND m.category = #{category}
+        </if>
+        ORDER BY m.update_time DESC, m.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+</mapper>
