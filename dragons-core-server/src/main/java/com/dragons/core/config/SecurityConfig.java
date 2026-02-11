@@ -9,6 +9,9 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import com.dragons.core.security.JwtAuthenticationFilter;
 
@@ -34,6 +37,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+            // 配置 CORS（必须在其他配置之前）
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             // 禁用CSRF保护（仅用于测试环境）
             .csrf(AbstractHttpConfigurer::disable)
             // 不使用Session，完全基于JWT
@@ -64,5 +69,34 @@ public class SecurityConfig {
     @Bean
     public JwtAuthenticationFilter jwtAuthenticationFilter() {
         return new JwtAuthenticationFilter();
+    }
+
+    /**
+     * CORS 配置源
+     * 允许前端跨域访问
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        
+        // 允许的源（前端地址）
+        configuration.addAllowedOrigin("http://localhost:5173");
+        
+        // 允许的请求头
+        configuration.addAllowedHeader("*");
+        
+        // 允许的请求方法
+        configuration.addAllowedMethod("*");
+        
+        // 允许携带凭证（Cookie、Authorization 等）
+        configuration.setAllowCredentials(true);
+        
+        // 预检请求的缓存时间（秒）
+        configuration.setMaxAge(3600L);
+        
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        
+        return source;
     }
 }
