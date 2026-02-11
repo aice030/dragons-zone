@@ -140,7 +140,17 @@ public enum ResponseCode {
     /**
      * 树洞分享：部分或全部接收方无法接收
      */
-    TREE_HOLE_SHARE_PARTIAL_FAIL(4021, "分享失败，部分用户无法接收");
+    TREE_HOLE_SHARE_PARTIAL_FAIL(4021, "分享失败，部分用户无法接收"),
+
+    /**
+     * 媒体审核：无审核权限，仅管理员或作者可审核
+     */
+    MEDIA_AUDIT_PERMISSION_DENIED(4022, "无审核权限，仅管理员或作者可审核"),
+
+    /**
+     * 媒体审核：媒体不在待审核状态
+     */
+    MEDIA_NOT_PENDING(4023, "媒体不在待审核状态");
 
     /**
      * 状态码

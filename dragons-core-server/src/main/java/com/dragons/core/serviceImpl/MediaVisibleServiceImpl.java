@@ -100,17 +100,19 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
-        // total
+        // total（允许显示 state=6 待审核和 state=7 审核未通过，让上传者看到审核状态）
         LambdaQueryWrapper<Media> countWrapper = new LambdaQueryWrapper<>();
         countWrapper.eq(Media::getUploaderId, uploaderUserId);
+        countWrapper.ne(Media::getState, (byte) 5); // 排除已删除 state=5
         if (category != null) {
             countWrapper.eq(Media::getCategory, category);
         }
         long total = mediaMapper.selectCount(countWrapper);
 
-        // list
+        // list（允许显示 state=6 待审核和 state=7 审核未通过）
         LambdaQueryWrapper<Media> listWrapper = new LambdaQueryWrapper<>();
         listWrapper.eq(Media::getUploaderId, uploaderUserId);
+        listWrapper.ne(Media::getState, (byte) 5); // 排除已删除 state=5
         if (category != null) {
             listWrapper.eq(Media::getCategory, category);
         }

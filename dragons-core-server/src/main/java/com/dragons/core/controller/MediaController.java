@@ -1,9 +1,12 @@
 package com.dragons.core.controller;
 
+import com.dragons.core.dto.MediaAuditRequest;
+import com.dragons.core.dto.MediaAuditResult;
 import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.dto.Result;
 import com.dragons.core.security.JwtPrincipal;
 import com.dragons.core.service.IMediaService;
+import com.dragons.core.service.IMediaVisibleService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,12 +80,13 @@ public class MediaController {
     }
 
     /**
-     * 更新媒体资源（仅上传者本人，仅 state=0 可更新）
+     * 更新媒体资源（仅上传者本人，state=0/6/7 可更新）
      *
      * PUT /api/media/{id}
      * form-data 或 x-www-form-urlencoded:
      * - title: 标题（可选）
      * - description: 描述（可选）
+     * 注意：如果原状态是 state=7（审核未通过），修改后自动变为 state=6（待审核），需要重新审核
      */
     @PutMapping("/{id}")
     public Result<IMediaService.UploadResult> update(
@@ -178,6 +182,78 @@ public class MediaController {
     @GetMapping("/{id}")
     public Result<IMediaService.MediaDetailResult> detail(@PathVariable("id") Long mediaId) {
         IMediaService.MediaDetailResult result = mediaService.getMediaDetail(mediaId);
+        return Result.success("查询成功", result);
+    }
+
+    /**
+     * 批量审核通过媒体（仅管理员或作者可操作）
+     *
+     * POST /api/media/audit/approve
+     * Content-Type: application/json
+     * Body: { "mediaIds": [1, 2, 3] }
+     */
+    @PostMapping("/audit/approve")
+    public Result<MediaAuditResult> approveMedia(
+            @AuthenticationPrincipal JwtPrincipal principal,
+            @RequestBody MediaAuditRequest request
+    ) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        if (request == null || request.getMediaIds() == null || request.getMediaIds().isEmpty()) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+        MediaAuditResult result = mediaService.approveMedia(request.getMediaIds(), principal.getUserId());
+        // 根据失败列表决定返回消息
+        if (result.getFailedItems() == null || result.getFailedItems().isEmpty()) {
+            return Result.success("审核通过成功", result);
+        } else {
+            return Result.success("部分审核通过失败", result);
+        }
+    }
+
+    /**
+     * 批量审核驳回媒体（仅管理员或作者可操作）
+     *
+     * POST /api/media/audit/reject
+     * Content-Type: application/json
+     * Body: { "mediaIds": [1, 2, 3] }
+     */
+    @PostMapping("/audit/reject")
+    public Result<MediaAuditResult> rejectMedia(
+            @AuthenticationPrincipal JwtPrincipal principal,
+            @RequestBody MediaAuditRequest request
+    ) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        if (request == null || request.getMediaIds() == null || request.getMediaIds().isEmpty()) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+        MediaAuditResult result = mediaService.rejectMedia(request.getMediaIds(), principal.getUserId());
+        // 根据失败列表决定返回消息
+        if (result.getFailedItems() == null || result.getFailedItems().isEmpty()) {
+            return Result.success("审核驳回成功", result);
+        } else {
+            return Result.success("部分审核驳回失败", result);
+        }
+    }
+
+    /**
+     * 查询待审核媒体列表（仅管理员或作者可访问）
+     *
+     * GET /api/media/audit/pending?page=1&size=10
+     */
+    @GetMapping("/audit/pending")
+    public Result<IMediaVisibleService.MediaPageResult> listPendingMedia(
+            @AuthenticationPrincipal JwtPrincipal principal,
+            @RequestParam(value = "page", required = false, defaultValue = "1") Integer page,
+            @RequestParam(value = "size", required = false, defaultValue = "10") Integer size
+    ) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        IMediaVisibleService.MediaPageResult result = mediaService.listPendingMedia(page, size, principal.getUserId());
         return Result.success("查询成功", result);
     }
 

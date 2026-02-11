@@ -133,15 +133,18 @@ dragons-zone/
 - [ ] 未来：迁移到阿里云OSS（替换实现类即可）
 
 #### 步骤3：媒体文件管理接口（部分完成）
-- [x] 文件上传接口（/api/media/upload）- 上传到MinIO，保存路径到数据库，支持可见权限控制
-- [x] 媒体基础信息更新接口（PUT /api/media/{id}）- 仅更新 title/description（不改文件、不改封面、不改可见范围）
+- [x] 文件上传接口（/api/media/upload）- 上传到MinIO，保存路径到数据库，支持可见权限控制；上传完成后状态为 `state=6`（待审核）
+- [x] 媒体基础信息更新接口（PUT /api/media/{id}）- 仅更新 title/description（不改文件、不改封面、不改可见范围）；允许 `state=0/6/7` 更新；`state=7` 修改后自动重置为 `state=6` 需重新审核
 - [x] 视频封面更新接口（PUT /api/media/{id}/cover）- 独立操作：先上传MinIO，再更新DB；DB失败则补偿删除MinIO封面
 - [x] 媒体可见范围修复接口（PUT /api/media/{id}/visible）- 独立操作：仅更新 media_visible，方案C差量同步，事务保证原子性（visibleUserIds最多12个）
-- [x] 文件列表查询接口（/api/mediaVisible/list）- 支持按专区 `currentUserId` 筛选（0=公共区，成员ID=成员专区）；**游客模式**，无需登录/请求头
-- [x] 我的上传列表接口（/api/mediaVisible/my/list）- 上传者本人管理自己的上传内容（直接查 media.uploader_id）
-- [x] 文件详情查询接口（/api/media/{id}）- 详情不依赖专区参数；**游客模式**，无需登录/请求头
-- [x] 文件下载接口（/api/media/{id}/download）- 返回MinIO预签名URL（2小时有效）；**游客模式**，无需登录/请求头
+- [x] 文件列表查询接口（/api/mediaVisible/list）- 支持按专区 `currentUserId` 筛选（0=公共区，成员ID=成员专区）；仅显示 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
+- [x] 我的上传列表接口（/api/mediaVisible/my/list）- 上传者本人管理自己的上传内容（直接查 media.uploader_id）；显示所有状态（排除 `state=5` 已删除），包括待审核和审核未通过状态
+- [x] 文件详情查询接口（/api/media/{id}）- 详情不依赖专区参数；仅显示 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
+- [x] 文件下载接口（/api/media/{id}/download）- 返回MinIO预签名URL（2小时有效）；仅允许下载 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
 - [x] 文件删除接口（/api/media/{id}/delete）- 仅上传者可删除；软删除：media.state→4，删 media_visible，删 MinIO，media.state→5
+- [x] 媒体审核通过接口（POST /api/media/audit/approve）- 批量审核通过，将 `state=6`（待审核）改为 `state=0`（正常）；仅管理员或作者可操作；非事务性，返回失败项列表
+- [x] 媒体审核驳回接口（POST /api/media/audit/reject）- 批量审核驳回，将 `state=6`（待审核）改为 `state=7`（审核未通过）；仅管理员或作者可操作；非事务性，返回失败项列表
+- [x] 待审核媒体列表接口（GET /api/media/audit/pending）- 分页查询 `state=6`（待审核）的媒体列表；仅管理员或作者可访问
 
 #### 步骤4：树洞功能接口 ✅
 - [x] 投递留言接口（/api/treehole/{ownerId}/sent/messages）- 带防刷：上一条未读前禁止重复投递；同一接口支持可选 rootMessageId 做主人回复，回复时根消息自动标已读
@@ -155,7 +158,7 @@ dragons-zone/
 
 ### 后端闭环检查确认（可进入前端开发）
 
-- **接口覆盖**：用户（登录/注册/注销/重置密码/找回密码）、媒体（上传/更新/封面/可见范围/列表/详情/下载/删除、我的上传）、树洞（投递与回复/留言列表/已读/主人删除/发送者删除/开关/分享/分享收件箱）、树洞黑名单（拉黑）均已实现，与 API_DESIGN.md、development 清单一致。
+- **接口覆盖**：用户（登录/注册/注销/重置密码/找回密码）、媒体（上传/更新/封面/可见范围/列表/详情/下载/删除、我的上传、审核通过/驳回/待审核列表）、树洞（投递与回复/留言列表/已读/主人删除/发送者删除/开关/分享/分享收件箱）、树洞黑名单（拉黑）均已实现，与 API_DESIGN.md、development 清单一致。
 - **鉴权**：permitAll 仅开放登录/注册/找回密码及游客模式（GET 媒体列表、媒体详情、下载链接）；其余接口需 JWT，Controller 层对 principal 做 null 校验并返回 401。
 - **异常与响应**：BusinessException 由 GlobalExceptionHandler 统一转为 Result.error；Result 统一带 code/message/data/timestamp。
 - **业务逻辑**：媒体软删除与 MinIO 顺序、上传 state=2 写库失败回滚 MinIO、封面更新补偿、可见范围差量同步与事务、树洞防刷与回复原子性、分享部分失败动态文案等已按文档实现，未发现逻辑错误。

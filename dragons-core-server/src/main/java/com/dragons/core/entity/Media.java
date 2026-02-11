@@ -70,7 +70,7 @@ public class Media implements Serializable {
     private String coverPath;
 
     /**
-     * 0=正常；1=正在上传；2=上传成功；3=上传失败；4=正在删除；5=已删除
+     * 0=正常；1=正在上传；2=上传成功；3=上传失败；4=正在删除；5=已删除；6=待审核；7=审核未通过
      */
     @TableField("state")
     private Byte state;

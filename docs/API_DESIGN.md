@@ -397,6 +397,17 @@ Content-Type: application/json
 
 上传、更新、删除、我的上传列表等操作仍需登录。
 
+### 媒体状态说明
+媒体（media）的状态（state）字段定义如下：
+- `state=0`：正常（已审核通过，可公开查看）
+- `state=1`：正在上传
+- `state=2`：上传成功
+- `state=3`：上传失败
+- `state=4`：正在删除
+- `state=5`：已删除
+- `state=6`：待审核（上传完成后进入此状态，等待管理员/作者审核）
+- `state=7`：审核未通过（审核被驳回）
+
 ---
 
 ## 1. 上传媒体资源接口
@@ -490,8 +501,10 @@ Content-Type: multipart/form-data
 6. 保存 media_visible 记录（用于“成员专区筛选”，不是权限系统）：
    - **不再写入公共区 `user_id=0`**：公共区展示直接查询 `media` 表（永远全部公开）
    - 遍历 visibleUserIds：写入成员专区ID列表
-   - 若 media_visible 写库失败，不删 MinIO，media 保持 state=2，可后续通过「可见范围修复」接口重试
+   - 若 media_visible 保存成功，将 media 的 state 更新为 6（待审核）并写库；若 media_visible 写库失败，不删 MinIO，media 保持 state=2，可后续通过「可见范围修复」接口重试
 7. （可选）上传封面到 MinIO（如果传了 `cover`）
+
+**注意**：上传完成后，媒体状态为 `state=6`（待审核），需要管理员或作者审核通过后才能公开显示（`state=0`）。
 
 ---
 
@@ -499,7 +512,7 @@ Content-Type: multipart/form-data
 
 ### PUT /api/media/{id}
 
-**功能说明**：更新媒体的标题与描述（仅上传者本人；仅 `state=0` 可更新）
+**功能说明**：更新媒体的标题与描述（仅上传者本人；允许 `state=0`、`state=6`、`state=7` 更新）
 
 **请求头**：
 ```
@@ -536,8 +549,9 @@ Content-Type: application/x-www-form-urlencoded
 **业务逻辑**：
 1. 校验JWT并获取当前用户ID
 2. 查询media并校验所有权（上传者本人）
-3. 校验 media.state=0（正常态才能修改基础信息）
+3. 校验 media.state 为 0（正常）、6（待审核）或 7（审核未通过）才允许修改基础信息
 4. 更新 `title/description/updateTime` 写库
+5. 如果原状态是 `state=7`（审核未通过），修改后自动将状态重置为 `state=6`（待审核），需要重新审核
 
 ---
 
@@ -639,7 +653,7 @@ Content-Type: application/x-www-form-urlencoded
 
 ### GET /api/media/{id}/download
 
-**功能说明**：获取媒体资源的预签名下载URL（2小时有效）。支持游客模式，无需请求头。
+**功能说明**：获取媒体资源的预签名下载URL（2小时有效）。支持游客模式，无需请求头。仅允许下载 `state=0`（已审核通过）的媒体。
 
 **路径参数**：
 | 参数名 | 类型 | 必填 | 说明 |
@@ -671,7 +685,7 @@ Content-Type: application/x-www-form-urlencoded
 
 **业务逻辑**：
 1. 查询数据库中的media记录
-2. 检查记录是否存在且未删除（state 不为 4（正在删除）且不为 5（已删除））
+2. 仅允许下载 `state=0`（正常，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体
 3. 检查MinIO中文件是否实际存在（防止缓存不一致）
 4. 生成预签名URL（有效期2小时，7200秒）
 5. 返回URL给前端，前端可重定向下载
@@ -781,11 +795,11 @@ Authorization: Bearer <JWT_TOKEN>
 ```
 
 **业务逻辑**：
-1. 仅返回 `state=0`（正常可查看）的媒体；列表项不包含 state 字段（无需登录即可调用）
-3. 根据 `currentUserId`（专区ID）做筛选：
+1. 仅返回 `state=0`（正常可查看，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体；列表项不包含 state 字段（无需登录即可调用）
+2. 根据 `currentUserId`（专区ID）做筛选：
    - `currentUserId=0`：公共区，直接查询 `media`（不依赖 `media_visible`）
    - `currentUserId=成员ID`：成员专区，通过 `media_visible.user_id = currentUserId` 做筛选
-4. 按更新时间倒序、id 倒序分页返回
+3. 按更新时间倒序、id 倒序分页返回
 
 **注意**：
 - `currentUserId` 在此处表达“专区筛选”，不是会员权限控制
@@ -837,7 +851,7 @@ Authorization: Bearer <JWT_TOKEN>
 
 **业务逻辑**：
 1. 查询 `media` 记录
-2. 仅允许查看 `state=0`（正常可查看）的媒体
+2. 仅允许查看 `state=0`（正常可查看，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体
 3. 返回媒体详情字段（供前端展示与后续下载/删除操作）
 
 ---
@@ -882,8 +896,220 @@ Authorization: Bearer <JWT_TOKEN>
 
 **业务逻辑**：
 1. 从 JWT 获取当前用户ID（上传者ID）
-2. 查询 `media`：`uploader_id = 当前用户ID` 且 `state=0`
+2. 查询 `media`：`uploader_id = 当前用户ID` 且 `state != 5`（排除已删除状态，显示包括 `state=0`正常、`state=6`待审核、`state=7`审核未通过等所有状态）
 3. 按创建时间倒序分页返回
+
+---
+
+## 10. 媒体审核接口
+
+### 10.1 审核通过接口
+
+### POST /api/media/audit/approve
+
+**功能说明**：批量审核通过媒体，将媒体状态从 `state=6`（待审核）改为 `state=0`（正常）。仅管理员（`level=1`）或作者（`level=0`）可操作。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+```
+
+**请求参数**（JSON）：
+```json
+{
+  "mediaIds": [1, 2, 3]
+}
+```
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| mediaIds | List<Long> | 是 | 要审核通过的媒体ID列表 |
+
+**成功响应**（200）：
+- 全部成功：
+```json
+{
+  "code": 200,
+  "message": "审核通过成功",
+  "data": {
+    "failedItems": []
+  },
+  "timestamp": 1705564800000
+}
+```
+
+- 部分失败：
+```json
+{
+  "code": 200,
+  "message": "部分审核通过失败",
+  "data": {
+    "failedItems": [
+      {
+        "mediaId": 2,
+        "title": "媒体标题"
+      },
+      {
+        "mediaId": 999,
+        "title": "媒体id999不存在"
+      }
+    ]
+  },
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：
+- 未授权（401）
+- 无审核权限（4022）：当前用户不是管理员或作者
+
+**业务逻辑**：
+1. 校验JWT并获取当前用户ID
+2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
+3. 批量处理媒体ID列表：
+   - 如果媒体不存在，记录到失败列表（`title: "媒体id{media_id}不存在"`）
+   - 如果媒体状态不是 `state=6`（待审核），记录到失败列表
+   - 否则，将媒体状态更新为 `state=0`（正常）
+   - 如果更新失败，记录到失败列表
+4. 返回结果，包含失败项列表（如果有）
+
+**注意**：
+- 该方法**非事务性**：部分成功时不会回滚已成功的操作
+- 失败项会详细记录媒体ID和标题（或"媒体id{media_id}不存在"），便于管理员查看
+
+---
+
+### 10.2 审核驳回接口
+
+### POST /api/media/audit/reject
+
+**功能说明**：批量审核驳回媒体，将媒体状态从 `state=6`（待审核）改为 `state=7`（审核未通过）。仅管理员（`level=1`）或作者（`level=0`）可操作。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+```
+
+**请求参数**（JSON）：
+```json
+{
+  "mediaIds": [1, 2, 3]
+}
+```
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| mediaIds | List<Long> | 是 | 要审核驳回的媒体ID列表 |
+
+**成功响应**（200）：
+- 全部成功：
+```json
+{
+  "code": 200,
+  "message": "审核驳回成功",
+  "data": {
+    "failedItems": []
+  },
+  "timestamp": 1705564800000
+}
+```
+
+- 部分失败：
+```json
+{
+  "code": 200,
+  "message": "部分审核驳回失败",
+  "data": {
+    "failedItems": [
+      {
+        "mediaId": 2,
+        "title": "媒体标题"
+      },
+      {
+        "mediaId": 999,
+        "title": "媒体id999不存在"
+      }
+    ]
+  },
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：
+- 未授权（401）
+- 无审核权限（4022）：当前用户不是管理员或作者
+
+**业务逻辑**：
+1. 校验JWT并获取当前用户ID
+2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
+3. 批量处理媒体ID列表：
+   - 如果媒体不存在，记录到失败列表（`title: "媒体id{media_id}不存在"`）
+   - 如果媒体状态不是 `state=6`（待审核），记录到失败列表
+   - 否则，将媒体状态更新为 `state=7`（审核未通过）
+   - 如果更新失败，记录到失败列表
+4. 返回结果，包含失败项列表（如果有）
+
+**注意**：
+- 该方法**非事务性**：部分成功时不会回滚已成功的操作
+- 失败项会详细记录媒体ID和标题（或"媒体id{media_id}不存在"），便于管理员查看
+
+---
+
+### 10.3 待审核媒体列表接口
+
+### GET /api/media/audit/pending
+
+**功能说明**：分页查询待审核的媒体列表（`state=6`）。仅管理员（`level=1`）或作者（`level=0`）可访问。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**请求参数**（Query参数）：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| page | Integer | 否 | 页码，从1开始，默认1 |
+| size | Integer | 否 | 每页数量，默认10 |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": {
+    "total": 100,
+    "page": 1,
+    "size": 10,
+    "list": [
+      {
+        "id": 1,
+        "category": 0,
+        "title": "标题",
+        "description": "描述",
+        "storagePath": "images/2026/01/21/xxx.jpg",
+        "coverPath": "images/2026/01/21/xxx.jpg",
+        "uploaderId": 1,
+        "createTime": "2026-01-31T12:34:56",
+        "updateTime": "2026-01-31T12:34:56"
+      }
+    ]
+  },
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：
+- 未授权（401）
+- 无审核权限（4022）：当前用户不是管理员或作者
+
+**业务逻辑**：
+1. 校验JWT并获取当前用户ID
+2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
+3. 查询 `state=6`（待审核）的媒体列表
+4. 按创建时间倒序分页返回
 
 ---
 
@@ -1167,3 +1393,13 @@ Content-Type: application/json
 ### 2026-01-31
 - 新增媒体列表接口：`GET /api/mediaVisible/list`（支持按专区 `currentUserId` 筛选）
 - 新增媒体详情接口：`GET /api/media/{id}`（用于详情页展示）
+
+### 2026-02-02
+- 新增媒体审核流程：
+  - 上传完成后媒体状态为 `state=6`（待审核），需审核通过后才能公开显示
+  - 新增审核通过接口：`POST /api/media/audit/approve`（批量审核通过，`state=6` → `state=0`）
+  - 新增审核驳回接口：`POST /api/media/audit/reject`（批量审核驳回，`state=6` → `state=7`）
+  - 新增待审核列表接口：`GET /api/media/audit/pending`（分页查询待审核媒体）
+  - 更新接口允许 `state=0/6/7` 修改基础信息；`state=7` 修改后自动重置为 `state=6` 需重新审核
+  - 列表/详情/下载接口仅显示 `state=0`（已审核通过）的媒体
+  - "我的上传"列表显示所有状态（排除 `state=5` 已删除），包括待审核和审核未通过状态

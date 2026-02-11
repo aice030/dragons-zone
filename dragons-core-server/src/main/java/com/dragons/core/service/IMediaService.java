@@ -1,7 +1,9 @@
 package com.dragons.core.service;
 
+import com.dragons.core.dto.MediaAuditResult;
 import com.dragons.core.entity.Media;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.dragons.core.service.IMediaVisibleService;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
@@ -66,13 +68,14 @@ public interface IMediaService extends IService<Media> {
     MediaDetailResult getMediaDetail(Long mediaId);
 
     /**
-     * 更新媒体基础信息（仅允许 state=0 且上传者本人）
+     * 更新媒体基础信息（仅允许 state=0/6/7 且上传者本人）
      *
      * @param mediaId 媒体主键ID
      * @param currentUserId 当前登录用户ID（从JWT获取）
      * @param title 标题（可选，最多32字符）
      * @param description 描述（可选，最多128字符）
      * @return 与上传一致的 UploadResult（visibleUserIds 字段可能为 null）
+     * 注意：如果原状态是 state=7（审核未通过），修改后自动变为 state=6（待审核），需要重新审核
      */
     UploadResult update(Long mediaId,
                        Long currentUserId,
@@ -103,6 +106,34 @@ public interface IMediaService extends IService<Media> {
      * @return 与上传一致的 UploadResult
      */
     UploadResult rebuildVisible(Long mediaId, List<Long> visibleUserIds, Long currentUserId);
+
+    /**
+     * 批量审核通过媒体（仅管理员或作者可操作）
+     *
+     * @param mediaIds 要审核通过的媒体ID列表
+     * @param auditorUserId 审核者用户ID（从JWT获取，必须是管理员或作者）
+     * @return 审核结果，包含失败的媒体列表（mediaId 和 title）
+     */
+    MediaAuditResult approveMedia(List<Long> mediaIds, Long auditorUserId);
+
+    /**
+     * 批量审核驳回媒体（仅管理员或作者可操作）
+     *
+     * @param mediaIds 要审核驳回的媒体ID列表
+     * @param auditorUserId 审核者用户ID（从JWT获取，必须是管理员或作者）
+     * @return 审核结果，包含失败的媒体列表（mediaId 和 title）
+     */
+    MediaAuditResult rejectMedia(List<Long> mediaIds, Long auditorUserId);
+
+    /**
+     * 查询待审核媒体列表（仅管理员或作者可访问）
+     *
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param auditorUserId 审核者用户ID（从JWT获取，必须是管理员或作者）
+     * @return 待审核媒体列表（state=6）
+     */
+    IMediaVisibleService.MediaPageResult listPendingMedia(Integer page, Integer size, Long auditorUserId);
 
     /**
      * 上传结果（简单内部类，用于 Result<UploadResult> 返回）
