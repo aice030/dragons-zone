@@ -38,6 +38,21 @@
 - 依赖版本尽量保持同一套组件版本一致（例如 MyBatis-Plus 模块版本对齐），减少 IDE 假红与潜在冲突
 - 鉴权建议集中在过滤器/中间件层做，业务层只关心“当前用户是谁”
 
+## 2026-02-10（Vue 3 多根节点问题修复）
+
+### 问题
+MediaDetail 组件出现警告：`Extraneous non-props attributes (media-list) were passed to component but could not be automatically inherited because component renders fragment or text or teleport root nodes`
+
+### 原因
+Vue 3 中，如果组件模板有多个根节点（fragment），props 和事件监听器无法自动继承。
+
+### 解决方案
+将所有内容包装在一个根元素 `.media-detail-wrapper` 中，将原来的多个根节点（正常状态容器 + 错误状态容器）统一到一个根元素下。
+
+### 参考
+- Vue 3 组件必须只有一个根元素才能自动继承属性
+- 多个根节点需要使用单一包装元素或手动处理属性继承
+
 ## 2026-01-21（媒体下载/删除：一致性策略补全）
 
 ### 新增能力

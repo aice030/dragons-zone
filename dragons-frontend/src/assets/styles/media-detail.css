@@ -1,0 +1,469 @@
+/* 
+ * 媒体详情页样式 - 灯箱风格（全屏显示）
+ * 全黑背景，图片/视频居中铺满屏幕
+ */
+
+/* 详情页包装器 */
+.media-detail-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1000;
+}
+
+/* 详情页容器 */
+.media-detail-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* 背景遮罩层 - 全黑背景 */
+.media-detail-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+}
+
+/* 内容容器 */
+.media-detail-content {
+  position: relative;
+  z-index: 1001;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* 关闭按钮 */
+.close-btn {
+  position: absolute;
+  top: 2rem;
+  right: 2rem;
+  width: 48px;
+  height: 48px;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  font-size: 2rem;
+  line-height: 1;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 1002;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: rotate(90deg);
+}
+
+/* 加载容器 */
+.loading-container {
+  padding: 4rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(255, 255, 255, 0.2);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 媒体包装器 */
+.media-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1001;
+}
+
+/* 媒体显示区域 - 铺满屏幕 */
+.media-display {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  overflow: hidden;
+  position: relative;
+  z-index: 2; /* 确保媒体显示区域在信息面板之上 */
+}
+
+/* 图片样式 - 铺满屏幕 */
+.media-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* 视频样式 - 铺满屏幕 */
+.media-video {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+  position: relative;
+  z-index: 10; /* 确保视频控制条在媒体信息面板之上 */
+  pointer-events: auto; /* 确保视频和控制条可以交互 */
+}
+
+/* 媒体占位符 */
+.media-placeholder {
+  padding: 4rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.media-placeholder p {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+/* 媒体信息面板 */
+.media-info {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 2rem;
+  padding-bottom: 5rem; /* 为视频控制条留出足够空间（约60-70px） */
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+  color: white;
+  pointer-events: none; /* 让鼠标事件穿透，不影响视频控制条 */
+  z-index: 1; /* 确保在视频下方，但交互元素可以点击 */
+}
+
+/* 媒体信息面板内的交互元素恢复鼠标事件 */
+.media-info > * {
+  pointer-events: auto;
+}
+
+/* 确保视频控制条区域完全可交互 */
+.media-display video {
+  pointer-events: auto;
+  z-index: 10;
+}
+
+.media-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: white;
+  margin: 0 0 0.5rem 0;
+  line-height: 1.3;
+}
+
+.media-description {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0 0 1rem 0;
+  line-height: 1.6;
+}
+
+.media-meta {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.media-time {
+  display: flex;
+  align-items: center;
+}
+
+/* 操作图标区域 */
+.action-icons {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* 点赞按钮 */
+.like-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+}
+
+.like-btn:hover {
+  color: rgba(255, 255, 255, 1);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.like-btn.liked {
+  color: #ff4757;
+}
+
+.like-btn.liked:hover {
+  color: #ff3838;
+  background: rgba(255, 71, 87, 0.1);
+}
+
+/* 爱心图标 */
+.like-icon {
+  width: 20px;
+  height: 20px;
+  transition: transform 0.2s ease;
+}
+
+.like-btn:hover .like-icon {
+  transform: scale(1.1);
+}
+
+.like-btn.liked .like-icon {
+  animation: likePulse 0.3s ease;
+}
+
+@keyframes likePulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 点赞数 */
+.like-count {
+  font-weight: 500;
+  user-select: none;
+}
+
+/* 导航箭头按钮 */
+.nav-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1003;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.nav-arrow:hover {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(255, 255, 255, 0.8);
+  transform: translateY(-50%) scale(1.1);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.nav-arrow:active {
+  transform: translateY(-50%) scale(0.95);
+}
+
+.nav-arrow svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.nav-arrow-left {
+  left: 2rem;
+}
+
+.nav-arrow-right {
+  right: 2rem;
+}
+
+/* 下载图标按钮 */
+.download-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+}
+
+.download-icon-btn:hover {
+  color: rgba(255, 255, 255, 1);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 下载图标 */
+.download-icon {
+  width: 20px;
+  height: 20px;
+  transition: transform 0.2s ease;
+}
+
+.download-icon-btn:hover .download-icon {
+  transform: scale(1.1);
+}
+
+/* 错误容器 */
+.error-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.error-content {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 3rem;
+  border-radius: 8px;
+  text-align: center;
+  max-width: 500px;
+  color: white;
+}
+
+.error-content h2 {
+  color: white;
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+}
+
+.error-content p {
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0 0 2rem 0;
+  line-height: 1.6;
+}
+
+/* 动画 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 响应式设计 - 移动端 */
+@media (max-width: 736px) {
+  .close-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 1.5rem;
+    top: 1rem;
+    right: 1rem;
+  }
+
+  .media-info {
+    padding: 1.5rem;
+  }
+
+  .like-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .like-btn {
+    font-size: 0.85rem;
+    padding: 0.2rem 0.4rem;
+  }
+
+  .download-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .download-icon-btn {
+    padding: 0.2rem;
+  }
+
+  .nav-arrow {
+    width: 44px;
+    height: 44px;
+  }
+
+  .nav-arrow svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2.5;
+  }
+
+  .nav-arrow-left {
+    left: 1rem;
+  }
+
+  .nav-arrow-right {
+    right: 1rem;
+  }
+
+  .media-title {
+    font-size: 1.2rem;
+  }
+
+  .media-description {
+    font-size: 0.9rem;
+  }
+
+
+  .error-content {
+    padding: 2rem;
+    margin: 1rem;
+  }
+}
