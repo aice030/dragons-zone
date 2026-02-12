@@ -144,6 +144,15 @@ export function updateMediaCover(mediaId, coverFile) {
 }
 
 /**
+ * 删除媒体（需登录；仅上传者本人）
+ * @param {number} mediaId - 媒体ID
+ * @returns {Promise}
+ */
+export function deleteMedia(mediaId) {
+  return api.delete(`/api/media/${mediaId}/delete`)
+}
+
+/**
  * 上传媒体资源（图片/视频）- 单文件上传
  *
  * POST /api/media/upload
