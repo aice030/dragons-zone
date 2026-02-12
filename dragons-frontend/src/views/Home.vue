@@ -6,7 +6,7 @@
       <!-- 导航栏 -->
       <div class="nav-bar">
         <div class="nav-content">
-          <!-- 成员专区按钮和下拉菜单 -->
+          <!-- 左侧：成员专区按钮和下拉菜单 -->
           <div class="member-zone-dropdown" @click.stop>
             <button 
               class="member-zone-btn"
@@ -34,9 +34,95 @@
               </div>
             </Transition>
           </div>
+
+          <!-- 右侧：登录/注册 或 昵称下拉菜单 -->
+          <div class="nav-user-area">
+            <template v-if="userStore.isLoggedIn">
+              <div class="user-menu-dropdown" @click.stop>
+                <button
+                  type="button"
+                  class="nav-nickname-btn"
+                  :class="{ active: showUserMenu }"
+                  @click="toggleUserMenu"
+                >
+                  {{ userStore.nickName }}
+                </button>
+                <Transition name="dropdown">
+                  <div v-if="showUserMenu" class="user-dropdown-menu">
+                    <template v-for="(item, index) in userMenuItems" :key="index">
+                      <router-link
+                        v-if="item.path"
+                        :to="item.path"
+                        class="user-menu-option"
+                        @click="showUserMenu = false"
+                      >
+                        {{ item.label }}
+                      </router-link>
+                      <a
+                        v-else-if="item.href"
+                        :href="item.href"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="user-menu-option"
+                        @click="showUserMenu = false"
+                      >
+                        {{ item.label }}
+                      </a>
+                      <button
+                        v-else-if="item.modal === 'changePassword'"
+                        type="button"
+                        class="user-menu-option"
+                        @click="showChangePasswordModal = true; showUserMenu = false"
+                      >
+                        {{ item.label }}
+                      </button>
+                      <button
+                        v-else-if="item.modal === 'deregister'"
+                        type="button"
+                        class="user-menu-option user-menu-logout"
+                        @click="showDeregisterModal = true; showUserMenu = false"
+                      >
+                        {{ item.label }}
+                      </button>
+                      <button
+                        v-else-if="item.logout"
+                        type="button"
+                        class="user-menu-option user-menu-logout"
+                        @click="handleLogout"
+                      >
+                        {{ item.label }}
+                      </button>
+                    </template>
+                  </div>
+                </Transition>
+              </div>
+            </template>
+            <template v-else>
+              <button type="button" class="nav-btn nav-btn-ghost" @click="showLoginModal = true">登录</button>
+              <button type="button" class="nav-btn nav-btn-primary" @click="showRegisterModal = true">注册</button>
+            </template>
+          </div>
         </div>
       </div>
-      
+
+      <!-- 登录弹窗 -->
+      <LoginModal
+        v-model:visible="showLoginModal"
+        @success="showLoginModal = false"
+        @forgot-password="onForgotPasswordClick"
+      />
+      <!-- 注册弹窗 -->
+      <RegisterModal v-model:visible="showRegisterModal" @success="onRegisterSuccess" />
+      <!-- 找回密码弹窗 -->
+      <ForgotPasswordModal
+        v-model:visible="showForgotPasswordModal"
+        @success="onForgotPasswordSuccess"
+      />
+      <!-- 修改密码弹窗 -->
+      <ChangePasswordModal v-model:visible="showChangePasswordModal" @success="showChangePasswordModal = false" />
+      <!-- 注销账号确认弹窗 -->
+      <DeregisterConfirmModal v-model:visible="showDeregisterModal" @success="showDeregisterModal = false" />
+
       <!-- 媒体列表区域 -->
       <div class="media-list-container">
         <!-- 筛选选择器 - 右上角 -->
@@ -125,9 +211,52 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import MediaStrip from '@/components/MediaStrip.vue'
 import MediaDetail from '@/views/MediaDetail.vue'
+import LoginModal from '@/components/LoginModal.vue'
+import RegisterModal from '@/components/RegisterModal.vue'
+import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
+import ForgotPasswordModal from '@/components/ForgotPasswordModal.vue'
+import DeregisterConfirmModal from '@/components/DeregisterConfirmModal.vue'
+import { useUserStore } from '@/stores/user'
 import { getMediaList } from '@/api/media'
 import { getMembers } from '@/config/members'
+import { getUserMenuItems } from '@/config/userMenu'
 import { getContactInfo } from '@/config/contact'
+
+const userStore = useUserStore()
+const userMenuItems = getUserMenuItems()
+const showUserMenu = ref(false)
+const showChangePasswordModal = ref(false)
+const showForgotPasswordModal = ref(false)
+const showDeregisterModal = ref(false)
+const showLoginModal = ref(false)
+const showRegisterModal = ref(false)
+
+/** 注册成功后关闭注册弹窗，并打开登录弹窗让用户登录 */
+function onRegisterSuccess() {
+  showRegisterModal.value = false
+  showLoginModal.value = true
+}
+
+/** 登录框点击「找回密码」：关闭登录弹窗，打开找回密码弹窗 */
+function onForgotPasswordClick() {
+  showLoginModal.value = false
+  showForgotPasswordModal.value = true
+}
+
+/** 找回密码成功后关闭弹窗并打开登录弹窗，让用户用新密码登录 */
+function onForgotPasswordSuccess() {
+  showForgotPasswordModal.value = false
+  showLoginModal.value = true
+}
+
+function toggleUserMenu() {
+  showUserMenu.value = !showUserMenu.value
+}
+
+function handleLogout() {
+  userStore.logout()
+  showUserMenu.value = false
+}
 
 const currentCategory = ref(null) // null=全部, 0=图片, 1=视频
 const currentZoneId = ref(0) // 0=公共区, 其他=成员专区ID
@@ -221,10 +350,10 @@ const toggleMemberDropdown = () => {
 
 // 点击外部关闭下拉菜单
 const handleClickOutside = (event) => {
-  const dropdown = event.target.closest('.member-zone-dropdown')
-  if (!dropdown) {
-    showMemberDropdown.value = false
-  }
+  const memberDropdown = event.target.closest('.member-zone-dropdown')
+  const userDropdown = event.target.closest('.user-menu-dropdown')
+  if (!memberDropdown) showMemberDropdown.value = false
+  if (!userDropdown) showUserMenu.value = false
 }
 
 onMounted(() => {
