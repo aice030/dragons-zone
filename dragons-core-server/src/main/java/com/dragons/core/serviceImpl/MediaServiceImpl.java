@@ -969,7 +969,23 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         List<IMediaVisibleService.MediaListItem> list = new ArrayList<>();
         if (records != null) {
             for (Media m : records) {
-                list.add(new IMediaVisibleService.MediaListItem(m.getId(), m.getCategory(), m.getTitle(), m.getCoverPath()));
+                String coverPath = m.getCoverPath();
+                String coverUrl = null;
+                if (coverPath != null && !coverPath.trim().isEmpty()) {
+                    try {
+                        if (storageService.exists(coverPath)) {
+                            coverUrl = storageService.getPresignedUrl(coverPath, 7200);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+                list.add(new IMediaVisibleService.MediaListItem(
+                        m.getId(),
+                        m.getCategory(),
+                        m.getTitle(),
+                        coverPath,
+                        coverUrl
+                ));
             }
         }
 

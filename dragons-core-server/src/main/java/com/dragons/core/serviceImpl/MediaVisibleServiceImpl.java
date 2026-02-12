@@ -81,7 +81,9 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         List<MediaListItem> list = new ArrayList<>();
         if (records != null) {
             for (Media m : records) {
-                list.add(new MediaListItem(m.getId(), m.getCategory(), m.getTitle(), m.getCoverPath()));
+                String coverPath = m.getCoverPath();
+                String coverUrl = buildCoverPresignedUrl(coverPath);
+                list.add(new MediaListItem(m.getId(), m.getCategory(), m.getTitle(), coverPath, coverUrl));
             }
         }
         return new MediaPageResult(total, list);

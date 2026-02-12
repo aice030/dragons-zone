@@ -7,7 +7,7 @@
         :media-id="media.id"
         :category="media.category"
         :title="media.title"
-        :cover-path="media.coverPath"
+        :cover-url="media.coverUrl"
         :span="getCardSpan(media)"
         @click="handleCardClick"
       />

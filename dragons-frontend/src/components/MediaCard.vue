@@ -30,8 +30,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, watch } from 'vue'
-import { getMediaDownloadUrl } from '@/api/media'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   mediaId: {
@@ -46,7 +45,7 @@ const props = defineProps({
     type: String,
     default: ''
   },
-  coverPath: {
+  coverUrl: {
     type: String,
     default: ''
   },
@@ -71,25 +70,6 @@ const cardClass = computed(() => {
 
 // 不再需要类型样式类和文本
 
-// 加载封面图 URL
-const loadCoverUrl = async () => {
-  if (!props.coverPath || !props.mediaId) {
-    return
-  }
-  
-  try {
-    // 使用 download 接口获取预览 URL
-    const response = await getMediaDownloadUrl(props.mediaId)
-    if (response?.data?.downloadUrl) {
-      coverUrl.value = response.data.downloadUrl
-      imageError.value = false
-    }
-  } catch (error) {
-    console.error('加载封面图失败:', error)
-    imageError.value = true
-  }
-}
-
 // 图片加载错误处理
 const handleImageError = () => {
   imageError.value = true
@@ -104,15 +84,14 @@ const handleClick = () => {
   })
 }
 
-// 监听 mediaId 变化，重新加载封面
-watch(() => props.mediaId, () => {
-  loadCoverUrl()
-})
-
-// 组件挂载时加载封面
-onMounted(() => {
-  loadCoverUrl()
-})
+watch(
+  () => props.coverUrl,
+  (url) => {
+    coverUrl.value = url || ''
+    imageError.value = false
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

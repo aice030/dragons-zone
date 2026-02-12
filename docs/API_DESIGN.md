@@ -793,13 +793,17 @@ Authorization: Bearer <JWT_TOKEN>
         "id": 1,
         "category": 0,
         "title": "标题（可为空）",
-        "coverPath": "images/2026/01/21/xxx.jpg"
+        "coverPath": "images/2026/01/21/xxx.jpg",
+        "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
       }
     ]
   },
   "timestamp": 1705564800000
 }
 ```
+
+**字段说明**：
+- `coverUrl`：封面预签名 URL（2 小时有效），用于公共区/成员专区列表直接展示缩略图；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
 
 **业务逻辑**：
 1. 仅返回 `state=0`（正常可查看，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体；列表项不包含 state 字段（无需登录即可调用）
