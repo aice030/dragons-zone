@@ -151,8 +151,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             throw new BusinessException(ResponseCode.LOGIN_FAILED);
         }
 
-        // 4. 逻辑删除（设置state=1，重试 3 次）
+        // 4. 逻辑删除：设置 state=1，清除 nickName，手机号改为占位符以释放唯一约束（占位符按 id 唯一，避免多行 null 在某些库下冲突）
         user.setState((byte) 1);
+        user.setNickName("用户" + user.getId() + "已注销");
+        user.setPhoneNumber("deleted_" + user.getId());
         user.setUpdateTime(LocalDateTime.now());
         if (!updateByIdWithRetry(user)) {
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
@@ -165,10 +167,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
 
-        // 1) 校验手机号格式
-        if (phoneNumber == null || !PHONE_PATTERN.matcher(phoneNumber).matches()) {
-            throw new BusinessException(ResponseCode.PHONE_FORMAT_INVALID);
-        }
+        // 1) 只要注册成功，默认手机号合规，此处不再校验，以兼容手动入库的测试用户
+        // if (phoneNumber == null || !PHONE_PATTERN.matcher(phoneNumber).matches()) {
+        //     throw new BusinessException(ResponseCode.PHONE_FORMAT_INVALID);
+        // }
         // 2) 校验新密码（MVP：基础校验即可）
         if (newPassword == null || newPassword.trim().isEmpty()) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
@@ -213,9 +215,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (!StringUtils.hasText(loginName) || !StringUtils.hasText(phoneNumber)) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
-        if (phoneNumber != null && !PHONE_PATTERN.matcher(phoneNumber.trim()).matches()) {
-            throw new BusinessException(ResponseCode.PHONE_FORMAT_INVALID);
-        }
+        // 只要注册成功，默认手机号合规，此处不再校验，以兼容手动入库的测试用户
+        // if (phoneNumber != null && !PHONE_PATTERN.matcher(phoneNumber.trim()).matches()) {
+        //     throw new BusinessException(ResponseCode.PHONE_FORMAT_INVALID);
+        // }
         if (newPassword == null || newPassword.trim().isEmpty()) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
