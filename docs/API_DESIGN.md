@@ -551,7 +551,7 @@ Content-Type: application/x-www-form-urlencoded
 2. 查询media并校验所有权（上传者本人）
 3. 校验 media.state 为 0（正常）、6（待审核）或 7（审核未通过）才允许修改基础信息
 4. 更新 `title/description/updateTime` 写库
-5. 如果原状态是 `state=7`（审核未通过），修改后自动将状态重置为 `state=6`（待审核），需要重新审核
+5. 修改成功后自动将状态重置为 `state=6`（待审核），需要重新审核（包括原 `state=0/6/7`）
 
 ---
 
@@ -584,18 +584,23 @@ Content-Type: multipart/form-data
   "message": "封面更新成功",
   "data": {
     "mediaId": 1,
-    "coverPath": "covers/2026/01/31/abc123-cover.jpg"
+    "coverPath": "covers/2026/01/31/abc123-cover.jpg",
+    "coverUrl": "http://localhost:9000/dragons-media/covers/2026/01/31/abc123-cover.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
   },
   "timestamp": 1705564800000
 }
 ```
+
+**字段说明**：
+- `coverPath`：封面对象存储路径
+- `coverUrl`：封面预签名 URL（2 小时有效），用于前端更新成功后立即刷新预览；若无法生成则可能为空（例如对象不存在）
 
 **业务逻辑**：
 1. 校验JWT并获取当前用户ID
 2. 查询media并校验所有权（上传者本人）
 3. 校验 media.category=1（视频）、media.state=0
 4. 先上传封面到MinIO
-5. 再更新DB中的 `media.coverPath`
+5. 再更新DB中的 `media.coverPath`，并将 `media.state` 重置为 `state=6`（待审核）
 6. 若DB更新失败，补偿删除MinIO中新上传的封面对象，并返回失败
 
 ---
@@ -646,6 +651,8 @@ Content-Type: application/x-www-form-urlencoded
    - toAdd = newSet - oldSet
    - toRemove = oldSet - newSet
 6. 事务内：删除 toRemove、插入 toAdd（任何一步失败则整体回滚）
+7. **补救逻辑**：若媒体当前为 `state=2`（上传成功但不可见，通常是 upload 阶段写入 `media_visible` 失败导致），则在本次修复成功后将 `media.state` 修正为 `state=0`（正常可查看），并更新 `updateTime`
+8. 除 `state=2 → 0` 的补救场景外，**不修改 `media` 的其他字段**；标签仅用于“专区筛选”，不影响审核状态
 
 ---
 
@@ -831,12 +838,16 @@ Authorization: Bearer <JWT_TOKEN>
     "description": "描述（可为空）",
     "storagePath": "images/2026/01/21/xxx.jpg",
     "coverPath": "images/2026/01/21/xxx.jpg",
+    "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&...",
     "uploaderId": 1,
     "updateTime": "2026-01-31T12:34:56"
   },
   "timestamp": 1705564800000
 }
 ```
+
+**字段说明**：
+- `coverUrl`：封面预签名 URL（2 小时有效），用于详情页/弹窗直接展示封面；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
 
 **失败响应**：
 - 资源不存在（404）：
@@ -851,8 +862,10 @@ Authorization: Bearer <JWT_TOKEN>
 
 **业务逻辑**：
 1. 查询 `media` 记录
-2. 仅允许查看 `state=0`（正常可查看，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体
-3. 返回媒体详情字段（供前端展示与后续下载/删除操作）
+2. 若未登录（游客）或不是上传者本人：仅允许查看 `state=0`（正常可查看，已审核通过）的媒体；`state=6/7` 返回 404
+3. 若已登录且为上传者本人：允许查看 `state=0/6/7`（用于查看违规原因并做修改）
+4. 若 `coverPath` 存在且对象存储中对象存在，则生成 `coverUrl`（预签名 URL，2 小时有效）
+5. 返回媒体详情字段（供前端展示与后续下载/删除操作）
 
 ---
 
@@ -886,13 +899,17 @@ Authorization: Bearer <JWT_TOKEN>
         "id": 1,
         "category": 0,
         "title": "标题（可为空）",
-        "coverPath": "images/2026/01/21/xxx.jpg"
+        "coverPath": "images/2026/01/21/xxx.jpg",
+        "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
       }
     ]
   },
   "timestamp": 1705564800000
 }
 ```
+
+**字段说明**：
+- `coverUrl`：封面预签名 URL（2 小时有效），用于“我的上传”列表直接展示缩略图；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
 
 **业务逻辑**：
 1. 从 JWT 获取当前用户ID（上传者ID）
@@ -901,7 +918,45 @@ Authorization: Bearer <JWT_TOKEN>
 
 ---
 
-## 10. 媒体审核接口
+## 10. 查询媒体所属成员专区接口
+
+### GET /api/mediaVisible/{mediaId}/zones
+
+**功能说明**：根据媒体ID查询该媒体属于哪些成员专区。支持游客模式，无需请求头。
+
+**请求头**：无需（游客可访问）；若已登录也可携带 JWT。
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| mediaId | Long | 是 | 媒体ID |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": [1, 2, 3],
+  "timestamp": 1705564800000
+}
+```
+
+**说明**：
+- 返回成员专区ID列表（`user_id`）
+- 如果媒体只在公共区可见（`media_visible` 表中没有记录），返回空数组 `[]`
+- 如果返回 `[1, 2, 3]`，表示该媒体在成员1、成员2、成员3的专区可见
+
+**失败响应**：
+- 请求参数错误（400）：mediaId 为空
+
+**业务逻辑**：
+1. 根据 `mediaId` 查询 `media_visible` 表
+2. 返回所有匹配的 `user_id` 列表（成员专区ID）
+3. 如果媒体只在公共区可见（`media_visible` 表中没有记录），返回空列表
+
+---
+
+## 11. 媒体审核接口
 
 ### 10.1 审核通过接口
 
@@ -1403,3 +1458,4 @@ Content-Type: application/json
   - 更新接口允许 `state=0/6/7` 修改基础信息；`state=7` 修改后自动重置为 `state=6` 需重新审核
   - 列表/详情/下载接口仅显示 `state=0`（已审核通过）的媒体
   - "我的上传"列表显示所有状态（排除 `state=5` 已删除），包括待审核和审核未通过状态
+- 新增查询媒体所属成员专区接口：`GET /api/mediaVisible/{mediaId}/zones`（根据媒体ID查询该媒体属于哪些成员专区）

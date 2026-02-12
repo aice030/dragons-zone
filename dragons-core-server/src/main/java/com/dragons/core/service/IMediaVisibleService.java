@@ -43,6 +43,14 @@ public interface IMediaVisibleService extends IService<MediaVisible> {
     MyUploadPageResult listMyUpload(Integer page, Integer size, Byte category, Long uploaderUserId);
 
     /**
+     * 根据媒体ID查询该媒体属于哪些成员专区
+     *
+     * @param mediaId 媒体ID
+     * @return 成员专区ID列表（user_id），如果媒体只在公共区可见则返回空列表
+     */
+    List<Long> getVisibleUserIdsByMediaId(Long mediaId);
+
+    /**
      * 媒体列表单项（面向前端的最小字段集合）
      */
     class MediaListItem {
@@ -81,6 +89,12 @@ public interface IMediaVisibleService extends IService<MediaVisible> {
         public Byte state;
         public String title;
         public String coverPath;
+        /**
+         * 封面预签名URL（便于前端直接展示缩略图）
+         * - 仅用于“我的上传”管理列表（该接口需登录）
+         * - 为空表示无法生成（例如对象不存在或 coverPath 为空）
+         */
+        public String coverUrl;
 
         public MyUploadListItem(Long id, Byte category, Byte state, String title, String coverPath) {
             this.id = id;

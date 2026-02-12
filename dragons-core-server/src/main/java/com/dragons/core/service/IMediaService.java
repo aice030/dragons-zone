@@ -63,9 +63,10 @@ public interface IMediaService extends IService<Media> {
      * 说明：产品定义是“永远全部公开”，专区只是筛选展示，不作为权限系统，因此详情无需专区参数。
      *
      * @param mediaId 媒体ID
+     * @param currentUserId 当前登录用户ID（从JWT获取；可为空表示游客）
      * @return 媒体详情
      */
-    MediaDetailResult getMediaDetail(Long mediaId);
+    MediaDetailResult getMediaDetail(Long mediaId, Long currentUserId);
 
     /**
      * 更新媒体基础信息（仅允许 state=0/6/7 且上传者本人）
@@ -158,10 +159,12 @@ public interface IMediaService extends IService<Media> {
     class CoverUpdateResult {
         public Long mediaId;
         public String coverPath;
+        public String coverUrl;
 
-        public CoverUpdateResult(Long mediaId, String coverPath) {
+        public CoverUpdateResult(Long mediaId, String coverPath, String coverUrl) {
             this.mediaId = mediaId;
             this.coverPath = coverPath;
+            this.coverUrl = coverUrl;
         }
     }
 
@@ -187,6 +190,7 @@ public interface IMediaService extends IService<Media> {
         public String description;
         public String storagePath;
         public String coverPath;
+        public String coverUrl;
         public Long uploaderId;
         public LocalDateTime updateTime;
 
@@ -196,6 +200,7 @@ public interface IMediaService extends IService<Media> {
                                  String description,
                                  String storagePath,
                                  String coverPath,
+                                 String coverUrl,
                                  Long uploaderId,
                                  LocalDateTime updateTime) {
             this.id = id;
@@ -204,6 +209,7 @@ public interface IMediaService extends IService<Media> {
             this.description = description;
             this.storagePath = storagePath;
             this.coverPath = coverPath;
+            this.coverUrl = coverUrl;
             this.uploaderId = uploaderId;
             this.updateTime = updateTime;
         }

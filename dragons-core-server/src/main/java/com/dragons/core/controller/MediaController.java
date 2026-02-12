@@ -180,8 +180,12 @@ public class MediaController {
      * 支持游客模式：未登录也可访问，无需请求头。专区只用于列表筛选，详情无需传专区ID。
      */
     @GetMapping("/{id}")
-    public Result<IMediaService.MediaDetailResult> detail(@PathVariable("id") Long mediaId) {
-        IMediaService.MediaDetailResult result = mediaService.getMediaDetail(mediaId);
+    public Result<IMediaService.MediaDetailResult> detail(
+            @PathVariable("id") Long mediaId,
+            @AuthenticationPrincipal JwtPrincipal principal
+    ) {
+        Long currentUserId = principal == null ? null : principal.getUserId();
+        IMediaService.MediaDetailResult result = mediaService.getMediaDetail(mediaId, currentUserId);
         return Result.success("查询成功", result);
     }
 

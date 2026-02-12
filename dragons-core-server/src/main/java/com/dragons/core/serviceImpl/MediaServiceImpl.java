@@ -47,7 +47,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final StorageService storageService;
     private final IMediaVisibleService mediaVisibleService;
     private final IUserService userService;
-    private static final String DEFAULT_COVER_PATH = "images/default-cover.jpg"; // 默认封面路径
+    // 默认封面路径
+    private static final String DEFAULT_COVER_PATH = "images/default-cover.jpg";
 
     @Autowired
     public MediaServiceImpl(StorageService storageService, IMediaVisibleService mediaVisibleService, IUserService userService) {
@@ -232,6 +233,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 若已经是正在删除状态，即上次删除执行失败，本次为重试，则跳过，直接进入第二步
         if (media.getState() != 4) {
             media.setState((byte) 4);
+            media.setUpdateTime(LocalDateTime.now());
             boolean stateUpdated = updateStateWithRetry(media, 3);
             if (!stateUpdated) {
                 // 更新状态失败，返回删除失败
@@ -269,26 +271,51 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
 
         // 第四步：将 media 的 state 改为 5（已删除）
-        media.setState((byte) 5); // 5=已删除
+        media.setState((byte) 5);
+        media.setUpdateTime(LocalDateTime.now());
         updateStateWithRetry(media, 3);
         // 注意：即使更新失败也不影响，因为数据已经标记为正在删除，可以后续清理
     }
 
     @Override
-    public MediaDetailResult getMediaDetail(Long mediaId) {
+    public MediaDetailResult getMediaDetail(Long mediaId, Long currentUserId) {
         if (mediaId == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
         Media media = this.getById(mediaId);
-        // 只允许查看正常可查看的媒体（删除中/已删除/上传中/失败等不对外展示）
-        if (media == null || media.getState() == null || media.getState() != 0) {
+        if (media == null || media.getState() == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+
+        // 访问规则：
+        // - 游客/非上传者：仅允许查看 state=0（已审核通过）
+        // - 上传者本人：允许查看 state=0/6/7（便于查看违规原因并做修改）
+        byte state = media.getState();
+        if (state != 0) {
+            boolean isOwner = currentUserId != null
+                    && media.getUploaderId() != null
+                    && media.getUploaderId().equals(currentUserId);
+            if (!(isOwner && (state == 6 || state == 7))) {
+                throw new BusinessException(ResponseCode.NOT_FOUND);
+            }
         }
 
         // 说明：
         // “专区”只用于前端筛选展示，不用于做权限控制。
         // 因此详情不做专区校验：只要资源存在且 state=0，就允许查看详情。
+
+        // 为封面生成预签名URL（2小时有效），便于前端详情页/弹窗直接展示
+        String coverUrl = null;
+        String coverPath = media.getCoverPath();
+        if (coverPath != null && !coverPath.trim().isEmpty()) {
+            try {
+                if (storageService.exists(coverPath)) {
+                    coverUrl = storageService.getPresignedUrl(coverPath, 7200);
+                }
+            } catch (Exception ignored) {
+            }
+        }
 
         return new MediaDetailResult(
                 media.getId(),
@@ -296,7 +323,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 media.getTitle(),
                 media.getDescription(),
                 media.getStoragePath(),
-                media.getCoverPath(),
+                coverPath,
+                coverUrl,
                 media.getUploaderId(),
                 media.getUpdateTime()
         );
@@ -334,8 +362,11 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         media.setTitle(title);
         media.setDescription(description);
         media.setUpdateTime(LocalDateTime.now());
-        // 如果原状态是 state=7（审核未通过），修改后自动变回 state=6（待审核），需要重新审核
-        if (currentState == 7) {
+        // 修改基础信息后，一律回到 state=6（待审核），需要重新审核
+        // - 原 state=0（正常）→ 6
+        // - 原 state=6（待审核）→ 保持 6
+        // - 原 state=7（审核未通过）→ 6
+        if (currentState == null || currentState != 6) {
             media.setState((byte) 6);
         }
 
@@ -347,6 +378,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public CoverUpdateResult updateCover(Long mediaId, MultipartFile cover, Long currentUserId) {
         if (mediaId == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
@@ -391,6 +423,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 2) 再更新 DB；若失败则删除刚上传的封面做补偿，并返回封面上传失败
         media.setCoverPath(coverPath);
         media.setUpdateTime(LocalDateTime.now());
+        // 修改封面后回到 state=6（待审核），需要重新审核
+        media.setState((byte) 6);
         boolean updated = updateWithRetry(media);
         if (!updated) {
             try {
@@ -400,7 +434,17 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
 
-        return new CoverUpdateResult(mediaId, coverPath);
+        // 3) 返回封面路径，并尽力返回封面预签名URL（用于前端立即刷新预览）
+        String coverUrl = null;
+        try {
+            if (storageService.exists(coverPath)) {
+                coverUrl = storageService.getPresignedUrl(coverPath, 7200);
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+
+        return new CoverUpdateResult(mediaId, coverPath, coverUrl);
     }
 
     @Override
@@ -469,13 +513,16 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
 
-        // 2) 若此前为 state=2（上传成功但不可见），修正为 0（正常可查看）
+        // 补救逻辑：
+        // 若此前为 state=2（上传成功但不可见，通常是 upload 阶段写入 media_visible 失败导致），
+        // 调用本接口修复可见范围成功后，将状态修正为 state=0（正常可查看）。
+        // 其余状态下，本接口仅维护 media_visible，不影响媒体审核状态（state）。
         if (media.getState() != null && media.getState() == 2) {
             media.setState((byte) 0);
-        }
-        media.setUpdateTime(LocalDateTime.now());
-        if (!updateWithRetry(media)) {
-            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+            media.setUpdateTime(LocalDateTime.now());
+            if (!updateWithRetry(media)) {
+                throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+            }
         }
 
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);

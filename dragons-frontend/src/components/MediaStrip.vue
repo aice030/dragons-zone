@@ -86,5 +86,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 样式在 home.css 中定义 */
+/* 样式在 media-browse.css 中定义 */
 </style>

@@ -7,9 +7,12 @@ import com.dragons.core.service.IMediaVisibleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestParam;
+
+import java.util.List;
 
 /**
  * <p>
@@ -79,6 +82,21 @@ public class MediaVisibleController {
         }
         IMediaVisibleService.MyUploadPageResult result = mediaVisibleService.listMyUpload(page, size, categoryValue, principal.getUserId());
         return Result.success("查询成功", result);
+    }
+
+    /**
+     * 根据媒体ID查询该媒体属于哪些成员专区
+     *
+     * GET /api/mediaVisible/{mediaId}/zones
+     * 支持游客模式：未登录也可访问，无需请求头
+     */
+    @GetMapping("/{mediaId}/zones")
+    public Result<List<Long>> getVisibleZonesByMediaId(@PathVariable("mediaId") Long mediaId) {
+        if (mediaId == null) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+        List<Long> visibleUserIds = mediaVisibleService.getVisibleUserIdsByMediaId(mediaId);
+        return Result.success("查询成功", visibleUserIds);
     }
 
     /**

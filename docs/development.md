@@ -145,6 +145,7 @@ dragons-zone/
 - [x] 媒体审核通过接口（POST /api/media/audit/approve）- 批量审核通过，将 `state=6`（待审核）改为 `state=0`（正常）；仅管理员或作者可操作；非事务性，返回失败项列表
 - [x] 媒体审核驳回接口（POST /api/media/audit/reject）- 批量审核驳回，将 `state=6`（待审核）改为 `state=7`（审核未通过）；仅管理员或作者可操作；非事务性，返回失败项列表
 - [x] 待审核媒体列表接口（GET /api/media/audit/pending）- 分页查询 `state=6`（待审核）的媒体列表；仅管理员或作者可访问
+- [x] 查询媒体所属成员专区接口（GET /api/mediaVisible/{mediaId}/zones）- 根据媒体ID查询该媒体属于哪些成员专区；返回成员专区ID列表；**游客模式**，无需登录/请求头
 
 #### 步骤4：树洞功能接口 ✅
 - [x] 投递留言接口（/api/treehole/{ownerId}/sent/messages）- 带防刷：上一条未读前禁止重复投递；同一接口支持可选 rootMessageId 做主人回复，回复时根消息自动标已读
@@ -158,7 +159,7 @@ dragons-zone/
 
 ### 后端闭环检查确认（可进入前端开发）
 
-- **接口覆盖**：用户（登录/注册/注销/重置密码/找回密码）、媒体（上传/更新/封面/可见范围/列表/详情/下载/删除、我的上传、审核通过/驳回/待审核列表）、树洞（投递与回复/留言列表/已读/主人删除/发送者删除/开关/分享/分享收件箱）、树洞黑名单（拉黑）均已实现，与 API_DESIGN.md、development 清单一致。
+- **接口覆盖**：用户（登录/注册/注销/重置密码/找回密码）、媒体（上传/更新/封面/可见范围/列表/详情/下载/删除、我的上传、审核通过/驳回/待审核列表、查询所属成员专区）、树洞（投递与回复/留言列表/已读/主人删除/发送者删除/开关/分享/分享收件箱）、树洞黑名单（拉黑）均已实现，与 API_DESIGN.md、development 清单一致。
 - **鉴权**：permitAll 仅开放登录/注册/找回密码及游客模式（GET 媒体列表、媒体详情、下载链接）；其余接口需 JWT，Controller 层对 principal 做 null 校验并返回 401。
 - **异常与响应**：BusinessException 由 GlobalExceptionHandler 统一转为 Result.error；Result 统一带 code/message/data/timestamp。
 - **业务逻辑**：媒体软删除与 MinIO 顺序、上传 state=2 写库失败回滚 MinIO、封面更新补偿、可见范围差量同步与事务、树洞防刷与回复原子性、分享部分失败动态文案等已按文档实现，未发现逻辑错误。

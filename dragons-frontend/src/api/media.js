@@ -76,4 +76,89 @@ export function getMediaDownloadUrl(mediaId) {
   return api.get(`/api/media/${mediaId}/download`)
 }
 
+/**
+ * 获取"我的上传"列表（需登录）
+ * @param {number} page - 页码（默认1）
+ * @param {number} size - 每页数量（默认10，最大100）
+ * @param {number|null} category - 类型筛选：null=全部，0=图片，1=视频
+ * @returns {Promise} 我的上传列表数据 { total, list: [{ id, category, state, title, coverPath }] }
+ */
+export function getMyUploads(page = 1, size = 10, category = null) {
+  const params = { page, size }
+  if (category !== null) {
+    params.category = category
+  }
+  return api.get('/api/mediaVisible/my/list', { params })
+}
+
+/**
+ * 获取媒体的可见专区列表（根据媒体ID查询该媒体属于哪些成员专区）
+ * @param {number} mediaId - 媒体ID
+ * @returns {Promise} 可见专区ID列表 { data: [userId1, userId2, ...] }
+ */
+export function getMediaVisibleZones(mediaId) {
+  return api.get(`/api/mediaVisible/${mediaId}/zones`)
+}
+
+/**
+ * 更新媒体的可见专区（需登录）
+ * @param {number} mediaId - 媒体ID
+ * @param {Array<number>} visibleUserIds - 可见专区ID列表
+ * @returns {Promise} 更新结果
+ */
+export function updateMediaVisibleZones(mediaId, visibleUserIds) {
+  return api.put(`/api/media/${mediaId}/visible`, null, {
+    params: {
+      visibleUserIds: JSON.stringify(visibleUserIds)
+    }
+  })
+}
+
+/**
+ * 更新媒体基础信息（标题/简介）（需登录）
+ * @param {number} mediaId - 媒体ID
+ * @param {{title?: string, description?: string}} payload
+ * @returns {Promise} 更新结果 { data: { mediaId, storagePath, category, visibleUserIds } }
+ */
+export function updateMediaBaseInfo(mediaId, { title, description } = {}) {
+  const body = new URLSearchParams()
+  // 注意：不传某字段则不修改；传空字符串则清空
+  if (title !== undefined) body.append('title', title)
+  if (description !== undefined) body.append('description', description)
+  return api.put(`/api/media/${mediaId}`, body, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  })
+}
+
+/**
+ * 更新视频封面（需登录）
+ * @param {number} mediaId - 媒体ID
+ * @param {File} coverFile - 封面图片文件
+ * @returns {Promise} 更新结果 { data: { mediaId, coverPath, coverUrl } }
+ */
+export function updateMediaCover(mediaId, coverFile) {
+  const formData = new FormData()
+  formData.append('cover', coverFile)
+  // axios 会自动设置 multipart/form-data 边界；无需手动设置 Content-Type
+  return api.put(`/api/media/${mediaId}/cover`, formData)
+}
+
+/**
+ * 上传媒体资源（图片/视频）- 单文件上传
+ *
+ * POST /api/media/upload
+ * Content-Type: multipart/form-data
+ *
+ * FormData 参数：
+ * - file: File（必填）
+ * - category: 0=图片，1=视频（必填）
+ * - visibleUserIds: JSON数组字符串，例如 [] 或 [3,4]（必填，可为空数组）
+ * - title: string（可选）
+ * - description: string（可选）
+ * - cover: File（可选，仅视频建议传）
+ */
+export function uploadMedia(formData) {
+  return api.post('/api/media/upload', formData)
+}
+
 export default api

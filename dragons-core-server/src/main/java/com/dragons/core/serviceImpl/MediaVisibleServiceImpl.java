@@ -9,6 +9,7 @@ import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.IMediaVisibleService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.dragons.core.storage.StorageService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -27,10 +28,12 @@ import java.util.List;
 public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, MediaVisible> implements IMediaVisibleService {
 
     private final MediaMapper mediaMapper;
+    private final StorageService storageService;
 
     @Autowired
-    public MediaVisibleServiceImpl(MediaMapper mediaMapper) {
+    public MediaVisibleServiceImpl(MediaMapper mediaMapper, StorageService storageService) {
         this.mediaMapper = mediaMapper;
+        this.storageService = storageService;
     }
 
     @Override
@@ -103,7 +106,8 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         // total（允许显示 state=6 待审核和 state=7 审核未通过，让上传者看到审核状态）
         LambdaQueryWrapper<Media> countWrapper = new LambdaQueryWrapper<>();
         countWrapper.eq(Media::getUploaderId, uploaderUserId);
-        countWrapper.ne(Media::getState, (byte) 5); // 排除已删除 state=5
+        // 排除已删除 state=5
+        countWrapper.ne(Media::getState, (byte) 5);
         if (category != null) {
             countWrapper.eq(Media::getCategory, category);
         }
@@ -112,7 +116,8 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         // list（允许显示 state=6 待审核和 state=7 审核未通过）
         LambdaQueryWrapper<Media> listWrapper = new LambdaQueryWrapper<>();
         listWrapper.eq(Media::getUploaderId, uploaderUserId);
-        listWrapper.ne(Media::getState, (byte) 5); // 排除已删除 state=5
+        // 排除已删除 state=5
+        listWrapper.ne(Media::getState, (byte) 5);
         if (category != null) {
             listWrapper.eq(Media::getCategory, category);
         }
@@ -124,10 +129,56 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         List<MyUploadListItem> list = new ArrayList<>();
         if (records != null) {
             for (Media m : records) {
-                list.add(new MyUploadListItem(m.getId(), m.getCategory(), m.getState(), m.getTitle(), m.getCoverPath()));
+                MyUploadListItem item = new MyUploadListItem(
+                        m.getId(),
+                        m.getCategory(),
+                        m.getState(),
+                        m.getTitle(),
+                        m.getCoverPath()
+                );
+                // 生成封面预签名URL：用于“我的上传”列表缩略图展示（允许 state=6/7）
+                item.coverUrl = buildCoverPresignedUrl(m.getCoverPath());
+                list.add(item);
             }
         }
 
         return new MyUploadPageResult(total, list);
+    }
+
+    /**
+     * 为 coverPath 生成预签名URL（不存在/空则返回 null）
+     */
+    private String buildCoverPresignedUrl(String coverPath) {
+        if (coverPath == null || coverPath.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            if (!storageService.exists(coverPath)) {
+                return null;
+            }
+            // 2 小时有效期，前端列表用足够
+            return storageService.getPresignedUrl(coverPath, 7200);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    @Override
+    public List<Long> getVisibleUserIdsByMediaId(Long mediaId) {
+        if (mediaId == null) {
+            return new ArrayList<>();
+        }
+        LambdaQueryWrapper<MediaVisible> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(MediaVisible::getMediaId, mediaId);
+        List<MediaVisible> visibleList = this.list(wrapper);
+        List<Long> userIds = new ArrayList<>();
+        if (visibleList != null) {
+            for (MediaVisible mv : visibleList) {
+                if (mv.getUserId() != null) {
+                    userIds.add(mv.getUserId());
+                }
+            }
+        }
+        return userIds;
     }
 }
