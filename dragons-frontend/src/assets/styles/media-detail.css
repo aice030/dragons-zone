@@ -124,6 +124,57 @@
   z-index: 2; /* 确保媒体显示区域在信息面板之上 */
 }
 
+/* 底部悬浮触发区（透明，不影响观看） */
+.media-bottom-hover-zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 180px;
+  z-index: 1003; /* 在媒体之上，但不遮挡控制条交互（无背景） */
+  background: transparent;
+  pointer-events: auto;
+}
+
+/* 描述（媒体下方） */
+.media-description-under {
+  position: absolute;
+  left: 50%;
+  bottom: 110px; /* 避开视频控制条与底部信息层 */
+  transform: translateX(-50%) translateY(10px);
+  max-width: min(920px, calc(100% - 3rem));
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  z-index: 1004; /* 高于媒体与信息层 */
+  pointer-events: none; /* 不挡住视频拖动/控制条 */
+  white-space: pre-wrap;
+  opacity: 0;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+/* 抖音式：只有悬浮到下部区域才显示描述 */
+.media-display:hover .media-description-under {
+  opacity: 0;
+}
+
+.media-bottom-hover-zone:hover ~ .media-description-under {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 触摸设备没有 hover：直接显示（否则无法看到描述） */
+@media (hover: none) {
+  .media-description-under {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 /* 图片样式 - 铺满屏幕 */
 .media-image {
   max-width: 100%;
@@ -459,6 +510,17 @@
 
   .media-description {
     font-size: 0.9rem;
+  }
+
+  .media-description-under {
+    bottom: 88px;
+    max-width: calc(100% - 2rem);
+    padding: 0.7rem 0.85rem;
+    font-size: 0.9rem;
+  }
+
+  .media-bottom-hover-zone {
+    height: 160px;
   }
 
 

@@ -125,151 +125,177 @@
         </Transition>
       </Teleport>
 
-      <div class="my-uploads-container">
-        <div class="my-uploads-header">
-          <h1 class="page-title">我的上传</h1>
-          <div class="header-actions-row">
-            <div class="category-selector-inline">
-              <button
-                class="category-option"
-                :class="{ active: currentCategory === null }"
-                @click="switchCategory(null)"
-              >
-                全部
-              </button>
-              <span class="category-separator">|</span>
-              <button
-                class="category-option"
-                :class="{ active: currentCategory === 0 }"
-                @click="switchCategory(0)"
-              >
-                图片
-              </button>
-              <span class="category-separator">|</span>
-              <button
-                class="category-option"
-                :class="{ active: currentCategory === 1 }"
-                @click="switchCategory(1)"
-              >
-                视频
-              </button>
-            </div>
-            <div class="header-right-actions">
-              <button class="upload-new-btn" @click="handleUploadNew">
-                <svg class="upload-new-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                上传新内容
-              </button>
-              <button
-                class="bulk-delete-btn"
-                @click="handleBulkDelete"
-              >
-                <svg class="bulk-delete-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M8 6V4h8v2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M6 6l1 16h10l1-16" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M10 11v6" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M14 11v6" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                {{ isBulkMode ? '确认删除' : '批量删除' }}
-              </button>
-              <button
-                v-if="isBulkMode"
-                type="button"
-                class="bulk-cancel-btn"
-                :disabled="bulkDeleting"
-                @click="exitBulkMode"
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="loading && mediaList.length === 0" class="loading">
-          <div class="loading-spinner"></div>
-        </div>
-
-        <div v-if="errorMsg" class="error-message">
-          <p>{{ errorMsg }}</p>
-        </div>
-
-        <div v-else-if="!loading && mediaList.length === 0" class="empty-state">
-          <p>暂无上传内容</p>
-        </div>
-
-        <div v-else class="my-uploads-table-wrapper">
-          <table class="my-uploads-table">
-            <thead>
-              <tr>
-                <th v-if="isBulkMode" class="col-select">
-                  <input
-                    class="select-checkbox"
-                    type="checkbox"
-                    :checked="allSelected"
-                    :indeterminate.prop="someSelected && !allSelected"
-                    @change="toggleSelectAll"
-                    aria-label="全选"
-                  />
-                </th>
-                <th class="col-thumbnail"> </th>
-                <th class="col-title">标题</th>
-                <th class="col-category">类型</th>
-                <th class="col-state">状态</th>
-                <th class="col-actions">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in mediaList" :key="item.id" class="table-row">
-                <td v-if="isBulkMode" class="col-select">
-                  <input
-                    class="select-checkbox"
-                    type="checkbox"
-                    :checked="selectedIds.includes(item.id)"
-                    @change="toggleSelectOne(item.id)"
-                    aria-label="选择"
-                  />
-                </td>
-                <td class="col-thumbnail">
-                  <div class="thumbnail-cell">
-                    <img
-                      v-if="item.coverUrl"
-                      :src="item.coverUrl"
-                      :alt="item.title || '无标题'"
-                      class="thumbnail-image"
-                      @error="handleCoverError(item)"
-                    />
-                    <div v-else class="thumbnail-placeholder">暂无封面</div>
-                  </div>
-                </td>
-                <td class="col-title">
-                  <span class="title-text">{{ item.title || '无标题' }}</span>
-                </td>
-                <td class="col-category">
-                  <span class="category-badge" :class="getCategoryClass(item.category)">
-                    {{ getCategoryLabel(item.category) }}
-                  </span>
-                </td>
-                <td class="col-state">
-                  <span class="state-badge" :class="getStateClass(item.state)">
-                    {{ getStateLabel(item.state) }}
-                  </span>
-                </td>
-                <td class="col-actions">
-                  <button class="action-btn" @click="openDetail(item.id)">查看详情</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div v-if="!loading && mediaList.length > 0 && hasMore" class="pagination">
-          <button class="load-more-btn" @click="loadMore" :disabled="loading">
-            {{ loading ? '加载中...' : '加载更多' }}
+      <div class="myuploads-layout">
+        <!-- 左侧控制台 -->
+        <aside class="myuploads-sidenav" aria-label="我的上传控制台">
+          <div class="myuploads-sidenav-title">控制台</div>
+          <button
+            type="button"
+            class="myuploads-sidenav-item"
+            :class="{ active: activePanel === 'list' }"
+            @click="switchPanel('list')"
+          >
+            上传列表
           </button>
-        </div>
+          <button
+            type="button"
+            class="myuploads-sidenav-item"
+            :class="{ active: activePanel === 'upload' }"
+            @click="switchPanel('upload')"
+          >
+            上传新内容
+          </button>
+        </aside>
 
+        <!-- 右侧内容 -->
+        <main class="myuploads-main">
+          <template v-if="activePanel === 'upload'">
+            <UploadMedia :embedded="true" />
+          </template>
+
+          <template v-else>
+            <div class="my-uploads-container">
+              <div class="my-uploads-header">
+                <h1 class="page-title">我的上传</h1>
+                <div class="header-actions-row">
+                  <div class="category-selector-inline">
+                    <button
+                      class="category-option"
+                      :class="{ active: currentCategory === null }"
+                      @click="switchCategory(null)"
+                    >
+                      全部
+                    </button>
+                    <span class="category-separator">|</span>
+                    <button
+                      class="category-option"
+                      :class="{ active: currentCategory === 0 }"
+                      @click="switchCategory(0)"
+                    >
+                      图片
+                    </button>
+                    <span class="category-separator">|</span>
+                    <button
+                      class="category-option"
+                      :class="{ active: currentCategory === 1 }"
+                      @click="switchCategory(1)"
+                    >
+                      视频
+                    </button>
+                  </div>
+                  <div class="header-right-actions">
+                    <button
+                      class="bulk-delete-btn"
+                      @click="handleBulkDelete"
+                    >
+                      <svg class="bulk-delete-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 6h18" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M8 6V4h8v2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M6 6l1 16h10l1-16" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M10 11v6" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M14 11v6" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                      {{ isBulkMode ? '确认删除' : '批量删除' }}
+                    </button>
+                    <button
+                      v-if="isBulkMode"
+                      type="button"
+                      class="bulk-cancel-btn"
+                      :disabled="bulkDeleting"
+                      @click="exitBulkMode"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="loading && mediaList.length === 0" class="loading">
+                <div class="loading-spinner"></div>
+              </div>
+
+              <div v-if="errorMsg" class="error-message">
+                <p>{{ errorMsg }}</p>
+              </div>
+
+              <div v-else-if="!loading && mediaList.length === 0" class="empty-state">
+                <p>暂无上传内容</p>
+              </div>
+
+              <div v-else class="my-uploads-table-wrapper">
+                <table class="my-uploads-table">
+                  <thead>
+                    <tr>
+                      <th v-if="isBulkMode" class="col-select">
+                        <input
+                          class="select-checkbox"
+                          type="checkbox"
+                          :checked="allSelected"
+                          :indeterminate.prop="someSelected && !allSelected"
+                          @change="toggleSelectAll"
+                          aria-label="全选"
+                        />
+                      </th>
+                      <th class="col-thumbnail"> </th>
+                      <th class="col-title">标题</th>
+                      <th class="col-category">类型</th>
+                      <th class="col-state">状态</th>
+                      <th class="col-actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in mediaList" :key="item.id" class="table-row">
+                      <td v-if="isBulkMode" class="col-select">
+                        <input
+                          class="select-checkbox"
+                          type="checkbox"
+                          :checked="selectedIds.includes(item.id)"
+                          @change="toggleSelectOne(item.id)"
+                          aria-label="选择"
+                        />
+                      </td>
+                      <td class="col-thumbnail">
+                        <div class="thumbnail-cell">
+                          <img
+                            v-if="item.coverUrl"
+                            :src="item.coverUrl"
+                            :alt="item.title || '无标题'"
+                            class="thumbnail-image"
+                            @error="handleCoverError(item)"
+                          />
+                          <div v-else class="thumbnail-placeholder">暂无封面</div>
+                        </div>
+                      </td>
+                      <td class="col-title">
+                        <span class="title-text">{{ item.title || '无标题' }}</span>
+                      </td>
+                      <td class="col-category">
+                        <span class="category-badge" :class="getCategoryClass(item.category)">
+                          {{ getCategoryLabel(item.category) }}
+                        </span>
+                      </td>
+                      <td class="col-state">
+                        <span class="state-badge" :class="getStateClass(item.state)">
+                          {{ getStateLabel(item.state) }}
+                        </span>
+                      </td>
+                      <td class="col-actions">
+                        <button class="action-btn" @click="openDetail(item.id)">查看详情</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div v-if="!loading && mediaList.length > 0 && hasMore" class="pagination">
+                <button class="load-more-btn" @click="loadMore" :disabled="loading">
+                  {{ loading ? '加载中...' : '加载更多' }}
+                </button>
+              </div>
+
+            </div>
+          </template>
+        </main>
       </div>
     </div>
   </div>
@@ -281,18 +307,21 @@ import { useRouter } from 'vue-router'
 import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
 import DeregisterConfirmModal from '@/components/DeregisterConfirmModal.vue'
 import MediaDetailModal from '@/components/MediaDetailModal.vue'
+import UploadMedia from '@/views/UploadMedia.vue'
 import { useUserStore } from '@/stores/user'
 import { getMyUploads, deleteMedia } from '@/api/media'
 import { getUserMenuItems } from '@/config/userMenu'
 
 const router = useRouter()
 const userStore = useUserStore()
-const userMenuItems = getUserMenuItems()
+const userMenuItems = computed(() => getUserMenuItems(userStore.userInfo))
 const showUserMenu = ref(false)
 const showChangePasswordModal = ref(false)
 const showDeregisterModal = ref(false)
 const showDetailModal = ref(false)
 const detailMediaId = ref(null)
+
+const activePanel = ref('list') // 'list' | 'upload'
 
 const currentCategory = ref(null)
 const mediaList = ref([])
@@ -474,7 +503,20 @@ function handleBaseUpdated(payload) {
 }
 
 function handleUploadNew() {
-  router.push('/upload')
+  switchPanel('upload')
+}
+
+function switchPanel(panel) {
+  if (activePanel.value === panel) return
+
+  // 切换面板时，清理批量删除状态与弹窗，避免“残留 UI”
+  showBulkDeleteConfirm.value = false
+  isBulkMode.value = false
+  selectedIds.value = []
+  showDetailModal.value = false
+  detailMediaId.value = null
+
+  activePanel.value = panel
 }
 
 function handleBulkDelete() {
@@ -544,4 +586,61 @@ async function handleBulkDeleteConfirm() {
 
 <style scoped>
 /* 样式在 media-browse.css 中定义 */
+
+.myuploads-layout {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.myuploads-sidenav {
+  width: 200px;
+  flex: 0 0 200px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(10px);
+  height: fit-content;
+  position: sticky;
+  top: 88px;
+}
+
+.myuploads-sidenav-title {
+  font-size: 12px;
+  opacity: 0.75;
+  margin-bottom: 10px;
+  letter-spacing: 1px;
+}
+
+.myuploads-sidenav-item {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 10px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.myuploads-sidenav-item + .myuploads-sidenav-item {
+  margin-top: 8px;
+}
+
+.myuploads-sidenav-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.myuploads-sidenav-item.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.myuploads-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 </style>

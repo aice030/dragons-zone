@@ -153,6 +153,35 @@ export function deleteMedia(mediaId) {
 }
 
 /**
+ * 获取待审核媒体列表（仅作者/管理员可用）
+ * GET /api/media/audit/pending
+ * @param {number} page
+ * @param {number} size
+ * @returns {Promise} { data: { total, page, size, list } }
+ */
+export function getAuditPendingList(page = 1, size = 10) {
+  return api.get('/api/media/audit/pending', { params: { page, size } })
+}
+
+/**
+ * 批量审核通过（仅作者/管理员可用）
+ * POST /api/media/audit/approve
+ * @param {Array<number>} mediaIds
+ */
+export function auditApprove(mediaIds = []) {
+  return api.post('/api/media/audit/approve', { mediaIds })
+}
+
+/**
+ * 批量审核驳回（仅作者/管理员可用）
+ * POST /api/media/audit/reject
+ * @param {Array<number>} mediaIds
+ */
+export function auditReject(mediaIds = []) {
+  return api.post('/api/media/audit/reject', { mediaIds })
+}
+
+/**
  * 上传媒体资源（图片/视频）- 单文件上传
  *
  * POST /api/media/upload

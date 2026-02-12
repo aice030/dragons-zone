@@ -83,7 +83,14 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             for (Media m : records) {
                 String coverPath = m.getCoverPath();
                 String coverUrl = buildCoverPresignedUrl(coverPath);
-                list.add(new MediaListItem(m.getId(), m.getCategory(), m.getTitle(), coverPath, coverUrl));
+                list.add(new MediaListItem(
+                        m.getId(),
+                        m.getCategory(),
+                        m.getTitle(),
+                        coverPath,
+                        m.getUpdateTime(),
+                        coverUrl
+                ));
             }
         }
         return new MediaPageResult(total, list);
@@ -136,7 +143,8 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                         m.getCategory(),
                         m.getState(),
                         m.getTitle(),
-                        m.getCoverPath()
+                        m.getCoverPath(),
+                        m.getUpdateTime()
                 );
                 // 生成封面预签名URL：用于“我的上传”列表缩略图展示（允许 state=6/7）
                 item.coverUrl = buildCoverPresignedUrl(m.getCoverPath());

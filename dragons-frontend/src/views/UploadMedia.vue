@@ -1,10 +1,10 @@
 <template>
-  <div class="media-browse-container">
-    <div class="media-browse-background"></div>
+  <div class="media-browse-container" :class="{ embedded }">
+    <div v-if="!embedded" class="media-browse-background"></div>
 
     <div class="media-browse-content">
       <!-- 导航栏 -->
-      <div class="nav-bar">
+      <div v-if="!embedded" class="nav-bar">
         <div class="nav-content">
           <router-link to="/my-uploads" class="nav-back-btn">
             <svg class="back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -76,12 +76,14 @@
         </div>
       </div>
 
-      <ChangePasswordModal v-model:visible="showChangePasswordModal" @success="showChangePasswordModal = false" />
-      <DeregisterConfirmModal v-model:visible="showDeregisterModal" @success="showDeregisterModal = false" />
+      <template v-if="!embedded">
+        <ChangePasswordModal v-model:visible="showChangePasswordModal" @success="showChangePasswordModal = false" />
+        <DeregisterConfirmModal v-model:visible="showDeregisterModal" @success="showDeregisterModal = false" />
+      </template>
 
       <!-- 上传内容区域 -->
       <div class="upload-media-container">
-        <h1 class="upload-page-title">上传新内容</h1>
+        <h1 v-if="!embedded" class="upload-page-title">上传新内容</h1>
 
         <div class="upload-media-form">
           <!-- 上传图片/视频（入口） -->
@@ -347,9 +349,16 @@ import { getUserMenuItems } from '@/config/userMenu'
 import { getMembers } from '@/config/members'
 import { uploadMedia } from '@/api/media'
 
+defineProps({
+  embedded: {
+    type: Boolean,
+    default: false
+  }
+})
+
 const router = useRouter()
 const userStore = useUserStore()
-const userMenuItems = getUserMenuItems()
+const userMenuItems = computed(() => getUserMenuItems(userStore.userInfo))
 const showUserMenu = ref(false)
 const showChangePasswordModal = ref(false)
 const showDeregisterModal = ref(false)
@@ -696,4 +705,21 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* 样式复用 media-detail-modal 和 media-browse 的样式 */
+
+/* 嵌入到“我的上传”页面时：去掉全屏页面感 */
+.media-browse-container.embedded {
+  min-height: auto;
+  background-color: transparent;
+  overflow: visible;
+}
+
+.media-browse-container.embedded .media-browse-content {
+  padding-top: 0;
+  min-height: auto;
+}
+
+.media-browse-container.embedded .upload-media-container {
+  padding-top: 0.25rem;
+  padding-bottom: 0;
+}
 </style>

@@ -181,12 +181,41 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
     @Override
     public String getDownloadUrl(Long mediaId) {
+        return getDownloadUrl(mediaId, null);
+    }
+
+    @Override
+    public String getDownloadUrl(Long mediaId, Long currentUserId) {
         // 1. 查询数据库中的媒体记录
         Media media = this.getById(mediaId);
-        // 排除正在删除（state=4）、已删除（state=5）、待审核（state=6）、审核未通过（state=7）的记录
-        if (media == null || media.getState() == 4 || media.getState() == 5 || media.getState() == 6 || media.getState() == 7) {
-            // 数据库记录不存在或已删除或待审核/驳回，返回404
+        if (media == null || media.getState() == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+
+        // 下载/预览规则：
+        // - 游客/普通用户：仅允许 state=0（已审核通过）
+        // - 上传者本人：允许 state=0/6/7（用于自查与修改）
+        // - 审核者（作者/管理员）：允许 state=0/6/7（用于审核预览）
+        byte state = media.getState();
+        if (state == 4 || state == 5) {
+            // 正在删除/已删除
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+        if (state != 0) {
+            boolean isOwner = currentUserId != null
+                    && media.getUploaderId() != null
+                    && media.getUploaderId().equals(currentUserId);
+            boolean isAuditor = false;
+            if (currentUserId != null) {
+                try {
+                    validateAuditorPermission(currentUserId);
+                    isAuditor = true;
+                } catch (BusinessException ignored) {
+                }
+            }
+            if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
+                throw new BusinessException(ResponseCode.NOT_FOUND);
+            }
         }
 
         // 2. 检查MinIO中文件是否实际存在（防止缓存不一致导致的问题）
@@ -214,7 +243,21 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (media == null || media.getState() == 5) {
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
-        if (media.getUploaderId() == null || !media.getUploaderId().equals(currentUserId)) {
+        
+        // 权限检查：允许删除的条件：
+        // 1. 当前用户是上传者（原有逻辑）
+        // 2. 或者当前用户是作者（level=0）或管理员（level=1）
+        boolean isOwner = media.getUploaderId() != null && media.getUploaderId().equals(currentUserId);
+        boolean isAuthorOrAdmin = false;
+        if (!isOwner) {
+            // 如果不是上传者，检查是否是作者或管理员
+            User currentUser = userService.getById(currentUserId);
+            if (currentUser != null && currentUser.getLevel() != null) {
+                Byte level = currentUser.getLevel();
+                isAuthorOrAdmin = level == 0 || level == 1; // 0=作者，1=管理员
+            }
+        }
+        if (!isOwner && !isAuthorOrAdmin) {
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -270,11 +313,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
 
-        // 第四步：将 media 的 state 改为 5（已删除）
-        media.setState((byte) 5);
-        media.setUpdateTime(LocalDateTime.now());
-        updateStateWithRetry(media, 3);
-        // 注意：即使更新失败也不影响，因为数据已经标记为正在删除，可以后续清理
+        // 第四步：物理删除 media 记录
+        // 这里失败了也没事，因为状态已经state=4，不影响其他用户查看，后续重新删一次就好了
+        this.removeById(mediaId);
     }
 
     @Override
@@ -296,7 +337,17 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             boolean isOwner = currentUserId != null
                     && media.getUploaderId() != null
                     && media.getUploaderId().equals(currentUserId);
-            if (!(isOwner && (state == 6 || state == 7))) {
+            // 审核者（作者/管理员）允许查看待审核/驳回媒体，用于审核流程中的预览
+            boolean isAuditor = false;
+            if (currentUserId != null) {
+                try {
+                    validateAuditorPermission(currentUserId);
+                    isAuditor = true;
+                } catch (BusinessException ignored) {
+                    // 非审核者：按“资源不存在”处理，避免泄露待审核资源
+                }
+            }
+            if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
                 throw new BusinessException(ResponseCode.NOT_FOUND);
             }
         }
@@ -984,6 +1035,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                         m.getCategory(),
                         m.getTitle(),
                         coverPath,
+                        m.getUpdateTime(),
                         coverUrl
                 ));
             }

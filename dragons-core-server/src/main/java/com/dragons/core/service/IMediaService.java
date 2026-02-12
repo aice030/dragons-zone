@@ -48,6 +48,18 @@ public interface IMediaService extends IService<Media> {
     String getDownloadUrl(Long mediaId);
 
     /**
+     * 获取媒体下载URL（预签名URL）
+     *
+     * 说明：兼容游客模式（currentUserId 可为空），但当携带 JWT 且为审核者（作者/管理员）时，
+     * 允许预览/下载待审核（state=6）和审核未通过（state=7）的媒体，用于审核流程。
+     *
+     * @param mediaId 媒体ID
+     * @param currentUserId 当前登录用户ID（从JWT获取；可为空表示游客）
+     * @return 预签名URL
+     */
+    String getDownloadUrl(Long mediaId, Long currentUserId);
+
+    /**
      * 删除媒体资源
      *
      * 约束：仅允许上传者本人删除（通过JWT中的userId校验）

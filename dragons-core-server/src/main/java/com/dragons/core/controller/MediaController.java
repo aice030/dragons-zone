@@ -154,8 +154,12 @@ public class MediaController {
      * 不需要权限检查：因为展示功能已经过滤，用户能看到的都是可以下载的
      */
     @GetMapping("/{id}/download")
-    public Result<IMediaService.DownloadUrlResult> download(@PathVariable("id") Long mediaId) {
-        String downloadUrl = mediaService.getDownloadUrl(mediaId);
+    public Result<IMediaService.DownloadUrlResult> download(
+            @PathVariable("id") Long mediaId,
+            @AuthenticationPrincipal JwtPrincipal principal
+    ) {
+        Long currentUserId = principal == null ? null : principal.getUserId();
+        String downloadUrl = mediaService.getDownloadUrl(mediaId, currentUserId);
         IMediaService.DownloadUrlResult result = new IMediaService.DownloadUrlResult(downloadUrl);
         return Result.success("获取成功", result);
     }

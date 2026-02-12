@@ -3,6 +3,7 @@ package com.dragons.core.service;
 import com.dragons.core.entity.MediaVisible;
 import com.baomidou.mybatisplus.extension.service.IService;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -58,6 +59,7 @@ public interface IMediaVisibleService extends IService<MediaVisible> {
         public Byte category;
         public String title;
         public String coverPath;
+        public LocalDateTime updateTime;
         /**
          * 封面预签名URL（2小时有效），用于公共区/成员专区列表直接展示缩略图
          * - 支持游客模式接口
@@ -65,11 +67,17 @@ public interface IMediaVisibleService extends IService<MediaVisible> {
          */
         public String coverUrl;
 
-        public MediaListItem(Long id, Byte category, String title, String coverPath, String coverUrl) {
+        public MediaListItem(Long id,
+                             Byte category,
+                             String title,
+                             String coverPath,
+                             LocalDateTime updateTime,
+                             String coverUrl) {
             this.id = id;
             this.category = category;
             this.title = title;
             this.coverPath = coverPath;
+            this.updateTime = updateTime;
             this.coverUrl = coverUrl;
         }
     }
@@ -96,6 +104,7 @@ public interface IMediaVisibleService extends IService<MediaVisible> {
         public Byte state;
         public String title;
         public String coverPath;
+        public LocalDateTime updateTime;
         /**
          * 封面预签名URL（便于前端直接展示缩略图）
          * - 仅用于“我的上传”管理列表（该接口需登录）
@@ -103,12 +112,18 @@ public interface IMediaVisibleService extends IService<MediaVisible> {
          */
         public String coverUrl;
 
-        public MyUploadListItem(Long id, Byte category, Byte state, String title, String coverPath) {
+        public MyUploadListItem(Long id,
+                                Byte category,
+                                Byte state,
+                                String title,
+                                String coverPath,
+                                LocalDateTime updateTime) {
             this.id = id;
             this.category = category;
             this.state = state;
             this.title = title;
             this.coverPath = coverPath;
+            this.updateTime = updateTime;
         }
     }
 

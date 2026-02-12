@@ -1,16 +1,31 @@
 <template>
   <div class="media-strip-wrapper" ref="stripWrapper">
     <div class="media-strip" ref="strip">
-      <MediaCard
-        v-for="media in mediaList"
-        :key="media.id"
-        :media-id="media.id"
-        :category="media.category"
-        :title="media.title"
-        :cover-url="media.coverUrl"
-        :span="getCardSpan(media)"
-        @click="handleCardClick"
-      />
+      <!-- 两行独立排布：避免“同列上下卡片宽度不一致”导致的空洞 -->
+      <div class="media-strip-row">
+        <MediaCard
+          v-for="media in rows.row1"
+          :key="media.id"
+          :media-id="media.id"
+          :category="media.category"
+          :title="media.title"
+          :cover-url="media.coverUrl"
+          :span="getCardSpan(media)"
+          @click="handleCardClick"
+        />
+      </div>
+      <div class="media-strip-row">
+        <MediaCard
+          v-for="media in rows.row2"
+          :key="media.id"
+          :media-id="media.id"
+          :category="media.category"
+          :title="media.title"
+          :cover-url="media.coverUrl"
+          :span="getCardSpan(media)"
+          @click="handleCardClick"
+        />
+      </div>
     </div>
     
     <div v-if="loading" class="loading">
@@ -24,7 +39,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import MediaCard from './MediaCard.vue'
 
 const props = defineProps({
@@ -43,14 +58,44 @@ const emit = defineEmits(['card-click', 'load-more'])
 const stripWrapper = ref(null)
 const strip = ref(null)
 
-// 获取卡片宽度（随机分配 span-1, span-2, span-3）
+// span 缓存：同一媒体每次渲染保持一致，避免“同一张图宽度跳动”
+const spanById = ref({})
+
+// 获取卡片宽度（随机分配 span-1, span-2, span-3；对同一 id 固定）
 const getCardSpan = (media) => {
-  // 可以根据需要调整逻辑，这里简单随机分配
+  const id = media?.id
+  if (id !== undefined && id !== null) {
+    const cached = spanById.value[id]
+    if (cached) return cached
+  }
+
   const random = Math.random()
-  if (random < 0.6) return 1 // 60% 正常宽度
-  if (random < 0.85) return 2 // 25% 1.5倍宽
-  return 3 // 15% 2倍宽
+  const span = random < 0.6 ? 1 : random < 0.85 ? 2 : 3
+  if (id !== undefined && id !== null) {
+    spanById.value = { ...spanById.value, [id]: span }
+  }
+  return span
 }
+
+// 两行分配：按 span 近似均衡分配到两行
+const rows = computed(() => {
+  const row1 = []
+  const row2 = []
+  let w1 = 0
+  let w2 = 0
+
+  for (const media of props.mediaList || []) {
+    const span = getCardSpan(media)
+    if (w1 <= w2) {
+      row1.push(media)
+      w1 += span
+    } else {
+      row2.push(media)
+      w2 += span
+    }
+  }
+  return { row1, row2 }
+})
 
 // 处理卡片点击
 const handleCardClick = (data) => {

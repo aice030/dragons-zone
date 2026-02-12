@@ -125,8 +125,8 @@
 
       <!-- 媒体列表区域 -->
       <div class="media-list-container">
-        <!-- 筛选选择器 - 右上角 -->
-        <div class="category-selector">
+        <!-- 筛选选择器 - 左上角 -->
+        <div class="category-selector filter-selector">
           <button
             class="category-option"
             :class="{ active: currentCategory === null }"
@@ -152,13 +152,71 @@
           </button>
         </div>
 
-        <!-- 媒体滚动带 -->
+        <!-- 显示模式切换 - 右上角 -->
+        <div class="category-selector display-mode-selector">
+          <button
+            class="category-option"
+            :class="{ active: displayMode === 'strip' }"
+            @click="switchDisplayMode('strip')"
+          >
+            条带
+          </button>
+          <span class="category-separator">|</span>
+          <button
+            class="category-option"
+            :class="{ active: displayMode === 'grid' }"
+            @click="switchDisplayMode('grid')"
+          >
+            网格
+          </button>
+        </div>
+
+        <!-- 条带模式：双行横向滚动 + 无限加载 -->
         <MediaStrip
+          v-if="displayMode === 'strip'"
           :media-list="mediaList"
           :loading="loading"
           @card-click="handleCardClick"
           @load-more="loadMore"
         />
+
+        <!-- 网格模式：固定 4 列 + 分页（每页 5 行） -->
+        <div v-else class="media-grid-wrapper">
+          <div class="media-grid">
+            <MediaCard
+              v-for="media in mediaList"
+              :key="media.id"
+              :media-id="media.id"
+              :category="media.category"
+              :title="media.title"
+              :cover-url="media.coverUrl"
+              :span="1"
+              @click="handleCardClick"
+            />
+          </div>
+
+          <div class="media-grid-pagination">
+            <button
+              type="button"
+              class="media-grid-page-btn"
+              :disabled="gridPage <= 1 || loading"
+              @click="goToGridPage(gridPage - 1)"
+            >
+              上一页
+            </button>
+            <span class="media-grid-page-info">
+              第 {{ gridPage }} / {{ gridTotalPages }} 页（共 {{ gridTotal }} 条）
+            </span>
+            <button
+              type="button"
+              class="media-grid-page-btn"
+              :disabled="gridPage >= gridTotalPages || loading"
+              @click="goToGridPage(gridPage + 1)"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 联系方式区域（纯展示，不可点击） -->
@@ -200,8 +258,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import MediaStrip from '@/components/MediaStrip.vue'
+import MediaCard from '@/components/MediaCard.vue'
 import MediaDetail from '@/views/MediaDetail.vue'
 import LoginModal from '@/components/LoginModal.vue'
 import RegisterModal from '@/components/RegisterModal.vue'
@@ -215,7 +274,7 @@ import { getUserMenuItems } from '@/config/userMenu'
 import { getContactInfo } from '@/config/contact'
 
 const userStore = useUserStore()
-const userMenuItems = getUserMenuItems()
+const userMenuItems = computed(() => getUserMenuItems(userStore.userInfo))
 const showUserMenu = ref(false)
 const showChangePasswordModal = ref(false)
 const showForgotPasswordModal = ref(false)
@@ -250,49 +309,92 @@ function handleLogout() {
 const currentCategory = ref(null)
 const currentZoneId = ref(0)
 const currentZoneName = ref('公共区')
-const mediaList = ref([])
-const loading = ref(false)
-const page = ref(1)
-const size = ref(20)
-const hasMore = ref(true)
+const displayMode = ref('strip') // 'strip' | 'grid'
+
+// 条带模式（无限滚动）
+const stripMediaList = ref([])
+const stripLoading = ref(false)
+const stripPage = ref(1)
+const stripSize = ref(20)
+const stripHasMore = ref(true)
+
+// 网格模式（分页：每页 5 行 * 4 列 = 20）
+const gridMediaList = ref([])
+const gridLoading = ref(false)
+const gridPage = ref(1)
+const gridSize = ref(20)
+const gridTotal = ref(0)
+const gridTotalPages = computed(() => Math.max(1, Math.ceil((gridTotal.value || 0) / gridSize.value)))
+
+const mediaList = computed(() => (displayMode.value === 'strip' ? stripMediaList.value : gridMediaList.value))
+const loading = computed(() => (displayMode.value === 'strip' ? stripLoading.value : gridLoading.value))
 const members = ref(getMembers())
 const showMemberDropdown = ref(false)
 const contactInfo = ref(getContactInfo())
 const showDetail = ref(false)
 const selectedMediaId = ref(null)
 
-const loadMediaList = async (reset = false) => {
-  if (loading.value || (!hasMore.value && !reset)) return
-  loading.value = true
+const loadStripList = async (reset = false) => {
+  if (stripLoading.value || (!stripHasMore.value && !reset)) return
+  stripLoading.value = true
   try {
     if (reset) {
-      page.value = 1
-      mediaList.value = []
-      hasMore.value = true
+      stripPage.value = 1
+      stripMediaList.value = []
+      stripHasMore.value = true
     }
-    const response = await getMediaList(page.value, size.value, currentCategory.value, currentZoneId.value)
+    const response = await getMediaList(stripPage.value, stripSize.value, currentCategory.value, currentZoneId.value)
     if (response?.data) {
       const newList = response.data.list || []
       if (reset) {
-        mediaList.value = newList
+        stripMediaList.value = newList
       } else {
-        mediaList.value.push(...newList)
+        stripMediaList.value.push(...newList)
       }
       const total = response.data.total || 0
-      hasMore.value = mediaList.value.length < total
-      if (hasMore.value) page.value += 1
+      stripHasMore.value = stripMediaList.value.length < total
+      if (stripHasMore.value) stripPage.value += 1
     }
   } catch (error) {
     console.error('加载媒体列表失败:', error)
   } finally {
-    loading.value = false
+    stripLoading.value = false
   }
+}
+
+const loadGridList = async (reset = false) => {
+  if (gridLoading.value) return
+  gridLoading.value = true
+  try {
+    if (reset) gridPage.value = 1
+    const response = await getMediaList(gridPage.value, gridSize.value, currentCategory.value, currentZoneId.value)
+    if (response?.data) {
+      gridMediaList.value = response.data.list || []
+      gridTotal.value = response.data.total || 0
+    }
+  } catch (error) {
+    console.error('加载媒体列表失败:', error)
+  } finally {
+    gridLoading.value = false
+  }
+}
+
+function reloadCurrentMode(reset = true) {
+  if (displayMode.value === 'strip') return loadStripList(reset)
+  return loadGridList(reset)
 }
 
 function switchCategory(category) {
   if (currentCategory.value === category) return
   currentCategory.value = category
-  loadMediaList(true)
+  // 重置两种模式的缓存，确保切换模式时数据与筛选一致
+  stripMediaList.value = []
+  stripPage.value = 1
+  stripHasMore.value = true
+  gridMediaList.value = []
+  gridPage.value = 1
+  gridTotal.value = 0
+  reloadCurrentMode(true)
 }
 
 function selectZone(zoneId, zoneName) {
@@ -303,7 +405,14 @@ function selectZone(zoneId, zoneName) {
   currentZoneId.value = zoneId
   currentZoneName.value = zoneName
   showMemberDropdown.value = false
-  loadMediaList(true)
+  // 重置两种模式的缓存，确保切换模式时数据与筛选一致
+  stripMediaList.value = []
+  stripPage.value = 1
+  stripHasMore.value = true
+  gridMediaList.value = []
+  gridPage.value = 1
+  gridTotal.value = 0
+  reloadCurrentMode(true)
 }
 
 function toggleMemberDropdown() {
@@ -318,7 +427,7 @@ function handleClickOutside(event) {
 }
 
 onMounted(() => {
-  loadMediaList(true)
+  loadStripList(true)
   document.addEventListener('click', handleClickOutside)
 })
 
@@ -327,7 +436,8 @@ onBeforeUnmount(() => {
 })
 
 function loadMore() {
-  if (hasMore.value && !loading.value) loadMediaList(false)
+  if (displayMode.value !== 'strip') return
+  if (stripHasMore.value && !stripLoading.value) loadStripList(false)
 }
 
 function handleCardClick(data) {
@@ -342,6 +452,24 @@ function handleCloseDetail() {
 
 function handleSwitchMedia(newMediaId) {
   selectedMediaId.value = newMediaId
+}
+
+function switchDisplayMode(mode) {
+  if (displayMode.value === mode) return
+  displayMode.value = mode
+  // 切换到网格时，强制按分页规则拉一页数据；切回条带则复用已加载缓存（空则拉取）
+  if (displayMode.value === 'grid') {
+    loadGridList(true)
+  } else if (stripMediaList.value.length === 0) {
+    loadStripList(true)
+  }
+}
+
+function goToGridPage(nextPage) {
+  const p = Math.min(Math.max(1, nextPage), gridTotalPages.value)
+  if (p === gridPage.value) return
+  gridPage.value = p
+  loadGridList(false)
 }
 </script>
 

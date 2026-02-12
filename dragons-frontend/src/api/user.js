@@ -48,3 +48,33 @@ export function forgotPassword(loginName, phoneNumber, newPassword) {
 export function deregister(password) {
   return api.post('/api/user/deregister', { password })
 }
+
+/**
+ * 获取用户列表（分页，仅作者可操作）
+ * @param {number} page - 页码（默认1）
+ * @param {number} size - 每页数量（默认20，最大100）
+ * @returns {Promise} { data: { total, list: [{ id, nickName, level, state }] } }
+ */
+export function getUserList(page = 1, size = 20) {
+  return api.get('/api/user/list', { params: { page, size } })
+}
+
+/**
+ * 修改用户等级（仅作者/管理员可操作）
+ * @param {number} targetUserId - 目标用户ID
+ * @param {number} level - 新等级（0=作者，1=管理员，2=普通用户，3=游客）
+ * @returns {Promise}
+ */
+export function updateUserLevel(targetUserId, level) {
+  return api.put(`/api/user/${targetUserId}/level`, { level })
+}
+
+/**
+ * 修改用户状态（仅作者/管理员可操作）
+ * @param {number} targetUserId - 目标用户ID
+ * @param {number} state - 新状态（0=正常，1=逻辑删除，2=黑名单）
+ * @returns {Promise}
+ */
+export function updateUserState(targetUserId, state) {
+  return api.put(`/api/user/${targetUserId}/state`, { state })
+}

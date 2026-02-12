@@ -311,6 +311,173 @@ Content-Type: application/json
 
 ---
 
+## 5. 修改用户等级接口
+
+### PUT /api/user/{targetUserId}/level
+
+**功能说明**：修改指定用户的等级（仅作者 `level=0` 或管理员 `level=1` 可操作）
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+```
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| targetUserId | Long | 是 | 目标用户ID |
+
+**请求参数**（JSON）：
+```json
+{
+  "level": 1
+}
+```
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| level | Byte | 是 | 新等级（0=作者，1=管理员，2=普通用户，3=游客） |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "用户等级修改成功",
+  "data": null,
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：
+- 未授权（401）：未登录或Token无效
+- 无权限（403）：当前用户不是作者或管理员
+- 请求参数错误（400）：level 参数为空或无效
+- 资源不存在（404）：targetUserId 对应的用户不存在
+
+**业务逻辑**：
+1. 从 JWT 获取当前用户ID
+2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
+3. 查询目标用户是否存在
+4. 更新目标用户的 `level` 字段
+5. 更新 `updateTime` 字段
+
+---
+
+## 6. 修改用户状态接口
+
+### PUT /api/user/{targetUserId}/state
+
+**功能说明**：修改指定用户的状态（仅作者 `level=0` 或管理员 `level=1` 可操作）
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+```
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| targetUserId | Long | 是 | 目标用户ID |
+
+**请求参数**（JSON）：
+```json
+{
+  "state": 2
+}
+```
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| state | Byte | 是 | 新状态（0=正常，1=逻辑删除，2=黑名单） |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "用户状态修改成功",
+  "data": null,
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：
+- 未授权（401）：未登录或Token无效
+- 无权限（403）：当前用户不是作者或管理员
+- 请求参数错误（400）：state 参数为空或无效
+- 资源不存在（404）：targetUserId 对应的用户不存在
+
+**业务逻辑**：
+1. 从 JWT 获取当前用户ID
+2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
+3. 查询目标用户是否存在
+4. 更新目标用户的 `state` 字段
+5. 更新 `updateTime` 字段
+
+---
+
+## 7. 获取用户列表接口
+
+### GET /api/user/list
+
+**功能说明**：分页获取用户列表（仅作者 `level=0` 可操作）。返回的用户列表不包含作者（`level=0`）用户。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**查询参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| page | Integer | 否 | 页码（默认1） |
+| size | Integer | 否 | 每页数量（默认20，最大100） |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": {
+    "total": 100,
+    "list": [
+      {
+        "id": 1,
+        "nickName": "用户昵称",
+        "level": 1,
+        "state": 0
+      }
+    ]
+  },
+  "timestamp": 1705564800000
+}
+```
+
+**字段说明**：
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| total | Long | 总记录数 |
+| list | List | 用户列表 |
+| list[].id | Long | 用户ID |
+| list[].nickName | String | 用户昵称 |
+| list[].level | Byte | 用户等级（0=作者，1=管理员，2=普通用户，3=游客） |
+| list[].state | Byte | 用户状态（0=正常，1=逻辑删除，2=黑名单） |
+
+**失败响应**：
+- 未授权（401）：未登录或Token无效
+- 无权限（403）：当前用户不是作者
+
+**业务逻辑**：
+1. 从 JWT 获取当前用户ID
+2. 校验当前用户权限（必须是 `level=0` 作者）
+3. 查询用户列表（排除 `level=0` 的作者用户）
+4. 仅返回 `id`、`nickName`、`level`、`state` 字段
+5. 按 `id` 升序排序
+6. 分页返回结果
+
+---
+
 ## 响应状态码说明
 
 ### 通用状态码
@@ -660,7 +827,12 @@ Content-Type: application/x-www-form-urlencoded
 
 ### GET /api/media/{id}/download
 
-**功能说明**：获取媒体资源的预签名下载URL（2小时有效）。支持游客模式，无需请求头。仅允许下载 `state=0`（已审核通过）的媒体。
+**功能说明**：获取媒体资源的预签名下载URL（2小时有效）。支持游客模式，无需请求头。
+
+**访问规则（补充：审核预览）**：
+- **游客 / 未登录**：仅允许获取 `state=0`（已审核通过）的媒体下载/播放 URL
+- **已登录上传者本人**：允许获取 `state=0/6/7`
+- **已登录作者/管理员（level=0/1）**：允许获取 `state=0/6/7`（用于资源审核流程中的视频/图片预览）
 
 **路径参数**：
 | 参数名 | 类型 | 必填 | 说明 |
@@ -692,12 +864,17 @@ Content-Type: application/x-www-form-urlencoded
 
 **业务逻辑**：
 1. 查询数据库中的media记录
-2. 仅允许下载 `state=0`（正常，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体
+2. 按“访问规则”校验资源 state 与身份：
+   - 游客：仅 `state=0`
+   - 上传者本人：`state=0/6/7`
+   - 作者/管理员：`state=0/6/7`（审核预览）
 3. 检查MinIO中文件是否实际存在（防止缓存不一致）
 4. 生成预签名URL（有效期2小时，7200秒）
 5. 返回URL给前端，前端可重定向下载
 
-**注意**：不需要权限检查，因为展示功能已经过滤，用户能看到的都是可以下载的
+**注意**：
+- 游客模式下的“可下载”仍以 `state=0` 为准
+- 审核预览场景下（作者/管理员已登录），待审核/驳回资源也允许获取预签名 URL，用于前端在审核列表中播放完整视频内容
 
 ---
 
@@ -794,6 +971,7 @@ Authorization: Bearer <JWT_TOKEN>
         "category": 0,
         "title": "标题（可为空）",
         "coverPath": "images/2026/01/21/xxx.jpg",
+        "updateTime": "2026-01-31T12:34:56",
         "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
       }
     ]
@@ -804,6 +982,7 @@ Authorization: Bearer <JWT_TOKEN>
 
 **字段说明**：
 - `coverUrl`：封面预签名 URL（2 小时有效），用于公共区/成员专区列表直接展示缩略图；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
+- `updateTime`：最近更新时间（用于前端按时间排序/展示）
 
 **业务逻辑**：
 1. 仅返回 `state=0`（正常可查看，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体；列表项不包含 state 字段（无需登录即可调用）
@@ -866,8 +1045,9 @@ Authorization: Bearer <JWT_TOKEN>
 
 **业务逻辑**：
 1. 查询 `media` 记录
-2. 若未登录（游客）或不是上传者本人：仅允许查看 `state=0`（正常可查看，已审核通过）的媒体；`state=6/7` 返回 404
+2. 若未登录（游客）：仅允许查看 `state=0`（正常可查看，已审核通过）的媒体；`state=6/7` 返回 404
 3. 若已登录且为上传者本人：允许查看 `state=0/6/7`（用于查看违规原因并做修改）
+4. 若已登录且为作者/管理员（level=0/1）：允许查看 `state=0/6/7`（用于审核流程中的预览与核对）
 4. 若 `coverPath` 存在且对象存储中对象存在，则生成 `coverUrl`（预签名 URL，2 小时有效）
 5. 返回媒体详情字段（供前端展示与后续下载/删除操作）
 
@@ -904,6 +1084,7 @@ Authorization: Bearer <JWT_TOKEN>
         "category": 0,
         "title": "标题（可为空）",
         "coverPath": "images/2026/01/21/xxx.jpg",
+        "updateTime": "2026-01-31T12:34:56",
         "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
       }
     ]
@@ -914,6 +1095,7 @@ Authorization: Bearer <JWT_TOKEN>
 
 **字段说明**：
 - `coverUrl`：封面预签名 URL（2 小时有效），用于“我的上传”列表直接展示缩略图；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
+- `updateTime`：最近更新时间（用于前端按时间排序/展示）
 
 **业务逻辑**：
 1. 从 JWT 获取当前用户ID（上传者ID）
@@ -1463,3 +1645,9 @@ Content-Type: application/json
   - 列表/详情/下载接口仅显示 `state=0`（已审核通过）的媒体
   - "我的上传"列表显示所有状态（排除 `state=5` 已删除），包括待审核和审核未通过状态
 - 新增查询媒体所属成员专区接口：`GET /api/mediaVisible/{mediaId}/zones`（根据媒体ID查询该媒体属于哪些成员专区）
+
+### 2026-02-13
+- 新增用户管理接口（仅作者/管理员可操作）：
+  - 新增修改用户等级接口：`PUT /api/user/{targetUserId}/level`（修改指定用户的等级）
+  - 新增修改用户状态接口：`PUT /api/user/{targetUserId}/state`（修改指定用户的状态，如拉黑）
+  - 新增获取用户列表接口：`GET /api/user/list`（分页获取用户列表，仅作者可操作，不包含作者用户）

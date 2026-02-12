@@ -64,14 +64,19 @@
             <div class="loading-spinner"></div>
             <p>加载媒体资源...</p>
           </div>
+
+          <!-- 底部悬浮触发区：模仿抖音，鼠标移到下部才显示描述 -->
+          <div class="media-bottom-hover-zone" aria-hidden="true"></div>
+
+          <!-- 描述：默认隐藏，悬浮下部触发区才显示 -->
+          <div v-if="mediaDetail.description" class="media-description-under">
+            {{ mediaDetail.description }}
+          </div>
         </div>
         
         <!-- 媒体信息 -->
         <div class="media-info">
           <h2 class="media-title">{{ mediaDetail.title || '无标题' }}</h2>
-          <p v-if="mediaDetail.description" class="media-description">
-            {{ mediaDetail.description }}
-          </p>
           <div class="media-meta">
             <div class="action-icons">
               <!-- 点赞按钮 -->

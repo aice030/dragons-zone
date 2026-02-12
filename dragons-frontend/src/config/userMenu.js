@@ -14,6 +14,8 @@
 export const USER_MENU_ITEMS = [
   { label: '修改密码', modal: 'changePassword' },
   { label: '我的上传', path: '/my-uploads' },
+  // 资源管理：仅作者/管理员可见（level: 0/1）
+  { label: '资源管理', path: '/resource-manage', levels: [0, 1] },
   { label: '我的留言', path: '/profile' },
   { label: '注销账号', modal: 'deregister' },
   { label: '退出登录', logout: true }
@@ -23,6 +25,12 @@ export const USER_MENU_ITEMS = [
  * 获取用户下拉菜单项
  * @returns {Array<{ label: string, path?: string, href?: string, logout?: boolean }>}
  */
-export function getUserMenuItems() {
-  return USER_MENU_ITEMS
+export function getUserMenuItems(userInfo) {
+  // 兼容旧调用：不传 userInfo 则返回全部（由调用方自己决定是否展示）
+  if (!userInfo) return USER_MENU_ITEMS
+  const level = userInfo?.level
+  return USER_MENU_ITEMS.filter((item) => {
+    if (!item.levels) return true
+    return item.levels.includes(level)
+  })
 }

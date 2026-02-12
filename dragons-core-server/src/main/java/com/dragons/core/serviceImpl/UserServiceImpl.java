@@ -1,6 +1,8 @@
 package com.dragons.core.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dragons.core.dao.UserMapper;
 import com.dragons.core.dto.LoginRequest;
 import com.dragons.core.dto.RegisterRequest;
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Pattern;
 
 /**
@@ -279,6 +283,132 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             }
         }
         return false;
+    }
+
+    /**
+     * 验证当前用户是否为作者或管理员
+     */
+    private void validateAuthorOrAdmin(Long userId) {
+        if (userId == null) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        User user = this.getById(userId);
+        if (user == null || user.getState() == null || user.getState() != 0) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        Byte level = user.getLevel();
+        if (level == null || (level != 0 && level != 1)) {
+            throw new BusinessException(ResponseCode.FORBIDDEN);
+        }
+    }
+
+    @Override
+    public void updateUserLevel(Long currentUserId, Long targetUserId, Byte newLevel) {
+        if (currentUserId == null || targetUserId == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        if (newLevel == null || (newLevel != 0 && newLevel != 1 && newLevel != 2 && newLevel != 3)) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+
+        // 验证当前用户权限（必须是作者或管理员）
+        validateAuthorOrAdmin(currentUserId);
+
+        // 查询目标用户
+        User targetUser = this.getById(targetUserId);
+        if (targetUser == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+
+        // 更新用户等级
+        targetUser.setLevel(newLevel);
+        targetUser.setUpdateTime(LocalDateTime.now());
+        if (!updateByIdWithRetry(targetUser)) {
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    @Override
+    public void updateUserState(Long currentUserId, Long targetUserId, Byte newState) {
+        if (currentUserId == null || targetUserId == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        if (newState == null || (newState != 0 && newState != 1 && newState != 2)) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+
+        // 验证当前用户权限（必须是作者或管理员）
+        validateAuthorOrAdmin(currentUserId);
+
+        // 查询目标用户
+        User targetUser = this.getById(targetUserId);
+        if (targetUser == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+
+        // 更新用户状态
+        targetUser.setState(newState);
+        targetUser.setUpdateTime(LocalDateTime.now());
+        if (!updateByIdWithRetry(targetUser)) {
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * 验证当前用户是否为作者（仅作者可操作）
+     */
+    private void validateAuthor(Long userId) {
+        if (userId == null) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        User user = this.getById(userId);
+        if (user == null || user.getState() == null || user.getState() != 0) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        Byte level = user.getLevel();
+        if (level == null || level != 0) {
+            throw new BusinessException(ResponseCode.FORBIDDEN);
+        }
+    }
+
+    @Override
+    public IUserService.UserListResult getUserList(Long currentUserId, Integer page, Integer size) {
+        if (currentUserId == null) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        if (page == null || page < 1) {
+            page = 1;
+        }
+        if (size == null || size < 1) {
+            size = 20;
+        }
+        if (size > 100) {
+            size = 100;
+        }
+
+        // 验证当前用户权限（必须是作者）
+        validateAuthor(currentUserId);
+
+        // 分页查询用户列表（排除 level=0 的作者）
+        Page<User> pageParam = new Page<>(page, size);
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.select(User::getId, User::getNickName, User::getLevel, User::getState);
+        wrapper.ne(User::getLevel, 0); // 排除 level=0 的作者
+        wrapper.orderByAsc(User::getId);
+        IPage<User> pageResult = this.page(pageParam, wrapper);
+
+        // 转换为结果列表
+        List<IUserService.UserListItem> list = new ArrayList<>();
+        for (User user : pageResult.getRecords()) {
+            list.add(new IUserService.UserListItem(
+                    user.getId(),
+                    user.getNickName(),
+                    user.getLevel(),
+                    user.getState()
+            ));
+        }
+
+        return new IUserService.UserListResult(pageResult.getTotal(), list);
     }
 
 }

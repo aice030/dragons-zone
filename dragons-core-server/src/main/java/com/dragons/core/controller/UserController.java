@@ -5,6 +5,8 @@ import com.dragons.core.dto.ForgotPasswordRequest;
 import com.dragons.core.dto.LoginRequest;
 import com.dragons.core.dto.RegisterRequest;
 import com.dragons.core.dto.ResetPasswordByPhoneRequest;
+import com.dragons.core.dto.UpdateUserLevelRequest;
+import com.dragons.core.dto.UpdateUserStateRequest;
 import com.dragons.core.dto.Result;
 import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.security.JwtPrincipal;
@@ -103,5 +105,68 @@ public class UserController {
         }
         userService.forgotPassword(request.getLoginName(), request.getPhoneNumber(), request.getNewPassword());
         return Result.success("密码已重置，请使用新密码登录");
+    }
+
+    /**
+     * 修改用户等级（仅作者/管理员可操作）
+     *
+     * @param principal 当前登录用户（从JWT获取）
+     * @param targetUserId 目标用户ID
+     * @param request 请求体（包含新等级）
+     */
+    @PutMapping("/{targetUserId}/level")
+    public Result<Void> updateUserLevel(@AuthenticationPrincipal JwtPrincipal principal,
+                                        @PathVariable("targetUserId") Long targetUserId,
+                                        @RequestBody UpdateUserLevelRequest request) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        if (request == null || request.getLevel() == null) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+
+        userService.updateUserLevel(principal.getUserId(), targetUserId, request.getLevel());
+        return Result.success("用户等级修改成功");
+    }
+
+    /**
+     * 修改用户状态（仅作者/管理员可操作）
+     *
+     * @param principal 当前登录用户（从JWT获取）
+     * @param targetUserId 目标用户ID
+     * @param request 请求体（包含新状态）
+     */
+    @PutMapping("/{targetUserId}/state")
+    public Result<Void> updateUserState(@AuthenticationPrincipal JwtPrincipal principal,
+                                       @PathVariable("targetUserId") Long targetUserId,
+                                       @RequestBody UpdateUserStateRequest request) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        if (request == null || request.getState() == null) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+
+        userService.updateUserState(principal.getUserId(), targetUserId, request.getState());
+        return Result.success("用户状态修改成功");
+    }
+
+    /**
+     * 获取用户列表（分页，仅作者可操作）
+     *
+     * @param principal 当前登录用户（从JWT获取）
+     * @param page 页码（默认1）
+     * @param size 每页数量（默认20，最大100）
+     */
+    @GetMapping("/list")
+    public Result<IUserService.UserListResult> getUserList(@AuthenticationPrincipal JwtPrincipal principal,
+                                                           @RequestParam(value = "page", defaultValue = "1") Integer page,
+                                                           @RequestParam(value = "size", defaultValue = "20") Integer size) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+
+        IUserService.UserListResult result = userService.getUserList(principal.getUserId(), page, size);
+        return Result.success("查询成功", result);
     }
 }
