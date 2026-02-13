@@ -4,81 +4,16 @@
 
     <div class="media-browse-content">
       <!-- 导航栏 -->
-      <div class="nav-bar">
-        <div class="nav-content">
+      <NavBar>
+        <template #left>
           <router-link to="/browse" class="nav-back-btn">
             <svg class="back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M19 12H5M12 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <span>返回浏览</span>
           </router-link>
-
-          <div class="nav-user-area">
-            <div class="user-menu-dropdown" @click.stop>
-              <button
-                type="button"
-                class="nav-nickname-btn"
-                :class="{ active: showUserMenu }"
-                @click="toggleUserMenu"
-              >
-                {{ userStore.nickName }}
-              </button>
-              <Transition name="dropdown">
-                <div v-if="showUserMenu" class="user-dropdown-menu">
-                  <template v-for="(item, index) in userMenuItems" :key="index">
-                    <router-link
-                      v-if="item.path"
-                      :to="item.path"
-                      class="user-menu-option"
-                      :class="{ active: item.path === '/my-uploads' }"
-                      @click="showUserMenu = false"
-                    >
-                      {{ item.label }}
-                    </router-link>
-                    <a
-                      v-else-if="item.href"
-                      :href="item.href"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="user-menu-option"
-                      @click="showUserMenu = false"
-                    >
-                      {{ item.label }}
-                    </a>
-                    <button
-                      v-else-if="item.modal === 'changePassword'"
-                      type="button"
-                      class="user-menu-option"
-                      @click="showChangePasswordModal = true; showUserMenu = false"
-                    >
-                      {{ item.label }}
-                    </button>
-                    <button
-                      v-else-if="item.modal === 'deregister'"
-                      type="button"
-                      class="user-menu-option user-menu-logout"
-                      @click="showDeregisterModal = true; showUserMenu = false"
-                    >
-                      {{ item.label }}
-                    </button>
-                    <button
-                      v-else-if="item.logout"
-                      type="button"
-                      class="user-menu-option user-menu-logout"
-                      @click="handleLogout"
-                    >
-                      {{ item.label }}
-                    </button>
-                  </template>
-                </div>
-              </Transition>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <ChangePasswordModal v-model:visible="showChangePasswordModal" @success="showChangePasswordModal = false" />
-      <DeregisterConfirmModal v-model:visible="showDeregisterModal" @success="showDeregisterModal = false" />
+        </template>
+      </NavBar>
       <MediaDetailModal
         v-model:visible="showDetailModal"
         :media-id="detailMediaId"
@@ -302,22 +237,16 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
-import DeregisterConfirmModal from '@/components/DeregisterConfirmModal.vue'
+import NavBar from '@/components/NavBar.vue'
 import MediaDetailModal from '@/components/MediaDetailModal.vue'
 import UploadMedia from '@/views/UploadMedia.vue'
 import { useUserStore } from '@/stores/user'
 import { getMyUploads, deleteMedia } from '@/api/media'
-import { getUserMenuItems } from '@/config/userMenu'
 
 const router = useRouter()
 const userStore = useUserStore()
-const userMenuItems = computed(() => getUserMenuItems(userStore.userInfo))
-const showUserMenu = ref(false)
-const showChangePasswordModal = ref(false)
-const showDeregisterModal = ref(false)
 const showDetailModal = ref(false)
 const detailMediaId = ref(null)
 
@@ -354,28 +283,11 @@ watch(mediaList, (list) => {
   selectedIds.value = selectedIds.value.filter(id => idSet.has(id))
 })
 
-function toggleUserMenu() {
-  showUserMenu.value = !showUserMenu.value
-}
-
-function handleLogout() {
-  userStore.logout()
-  showUserMenu.value = false
-  router.push('/browse')
-}
-
-function handleClickOutside(event) {
-  const userDropdown = event.target.closest('.user-menu-dropdown')
-  if (!userDropdown) showUserMenu.value = false
-}
+// 导航栏相关函数已移至 NavBar 组件
 
 onMounted(() => {
   loadMyUploads(true)
-  document.addEventListener('click', handleClickOutside)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleClickOutside)
+  // 导航栏相关事件监听已移至 NavBar 组件
 })
 
 async function loadMyUploads(reset = false) {

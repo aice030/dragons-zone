@@ -16,7 +16,6 @@ export const USER_MENU_ITEMS = [
   { label: '我的上传', path: '/my-uploads' },
   // 资源管理：仅作者/管理员可见（level: 0/1）
   { label: '资源管理', path: '/resource-manage', levels: [0, 1] },
-  { label: '我的留言', path: '/profile' },
   { label: '注销账号', modal: 'deregister' },
   { label: '退出登录', logout: true }
 ]

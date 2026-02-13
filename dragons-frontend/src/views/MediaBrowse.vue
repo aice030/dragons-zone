@@ -4,124 +4,7 @@
 
     <div class="media-browse-content">
       <!-- 导航栏 -->
-      <div class="nav-bar">
-        <div class="nav-content">
-          <!-- 左侧：成员专区按钮和下拉菜单 -->
-          <div class="member-zone-dropdown" @click.stop>
-            <button
-              class="member-zone-btn"
-              @click="toggleMemberDropdown"
-              :class="{ active: showMemberDropdown }"
-            >
-              成员专区
-              <svg class="dropdown-arrow" :class="{ open: showMemberDropdown }" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-
-            <!-- 下拉菜单 -->
-            <Transition name="dropdown">
-              <div v-if="showMemberDropdown" class="member-dropdown-menu">
-                <button
-                  v-for="member in members"
-                  :key="member.id"
-                  class="member-option"
-                  :class="{ active: currentZoneId === member.id }"
-                  @click="selectZone(member.id, member.name)"
-                >
-                  {{ member.name }}
-                </button>
-              </div>
-            </Transition>
-          </div>
-
-          <!-- 右侧：登录/注册 或 昵称下拉菜单 -->
-          <div class="nav-user-area">
-            <template v-if="userStore.isLoggedIn">
-              <div class="user-menu-dropdown" @click.stop>
-                <button
-                  type="button"
-                  class="nav-nickname-btn"
-                  :class="{ active: showUserMenu }"
-                  @click="toggleUserMenu"
-                >
-                  {{ userStore.nickName }}
-                </button>
-                <Transition name="dropdown">
-                  <div v-if="showUserMenu" class="user-dropdown-menu">
-                    <template v-for="(item, index) in userMenuItems" :key="index">
-                      <router-link
-                        v-if="item.path"
-                        :to="item.path"
-                        class="user-menu-option"
-                        @click="showUserMenu = false"
-                      >
-                        {{ item.label }}
-                      </router-link>
-                      <a
-                        v-else-if="item.href"
-                        :href="item.href"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="user-menu-option"
-                        @click="showUserMenu = false"
-                      >
-                        {{ item.label }}
-                      </a>
-                      <button
-                        v-else-if="item.modal === 'changePassword'"
-                        type="button"
-                        class="user-menu-option"
-                        @click="showChangePasswordModal = true; showUserMenu = false"
-                      >
-                        {{ item.label }}
-                      </button>
-                      <button
-                        v-else-if="item.modal === 'deregister'"
-                        type="button"
-                        class="user-menu-option user-menu-logout"
-                        @click="showDeregisterModal = true; showUserMenu = false"
-                      >
-                        {{ item.label }}
-                      </button>
-                      <button
-                        v-else-if="item.logout"
-                        type="button"
-                        class="user-menu-option user-menu-logout"
-                        @click="handleLogout"
-                      >
-                        {{ item.label }}
-                      </button>
-                    </template>
-                  </div>
-                </Transition>
-              </div>
-            </template>
-            <template v-else>
-              <button type="button" class="nav-btn nav-btn-primary" @click="showLoginModal = true">登录</button>
-              <button type="button" class="nav-btn nav-btn-ghost" @click="showRegisterModal = true">注册</button>
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <!-- 登录弹窗 -->
-      <LoginModal
-        v-model:visible="showLoginModal"
-        @success="showLoginModal = false"
-        @forgot-password="onForgotPasswordClick"
-      />
-      <!-- 注册弹窗 -->
-      <RegisterModal v-model:visible="showRegisterModal" @success="onRegisterSuccess" />
-      <!-- 找回密码弹窗 -->
-      <ForgotPasswordModal
-        v-model:visible="showForgotPasswordModal"
-        @success="onForgotPasswordSuccess"
-      />
-      <!-- 修改密码弹窗 -->
-      <ChangePasswordModal v-model:visible="showChangePasswordModal" @success="showChangePasswordModal = false" />
-      <!-- 注销账号确认弹窗 -->
-      <DeregisterConfirmModal v-model:visible="showDeregisterModal" @success="showDeregisterModal = false" />
+      <NavBar />
 
       <!-- 媒体列表区域 -->
       <div class="media-list-container">
@@ -258,53 +141,18 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { setSEO } from '@/utils/seo'
+import NavBar from '@/components/NavBar.vue'
 import MediaStrip from '@/components/MediaStrip.vue'
 import MediaCard from '@/components/MediaCard.vue'
 import MediaDetail from '@/views/MediaDetail.vue'
-import LoginModal from '@/components/LoginModal.vue'
-import RegisterModal from '@/components/RegisterModal.vue'
-import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
-import ForgotPasswordModal from '@/components/ForgotPasswordModal.vue'
-import DeregisterConfirmModal from '@/components/DeregisterConfirmModal.vue'
-import { useUserStore } from '@/stores/user'
 import { getMediaList } from '@/api/media'
 import { getMembers } from '@/config/members'
-import { getUserMenuItems } from '@/config/userMenu'
 import { getContactInfo } from '@/config/contact'
 
-const userStore = useUserStore()
-const userMenuItems = computed(() => getUserMenuItems(userStore.userInfo))
-const showUserMenu = ref(false)
-const showChangePasswordModal = ref(false)
-const showForgotPasswordModal = ref(false)
-const showDeregisterModal = ref(false)
-const showLoginModal = ref(false)
-const showRegisterModal = ref(false)
-
-function onRegisterSuccess() {
-  showRegisterModal.value = false
-  showLoginModal.value = true
-}
-
-function onForgotPasswordClick() {
-  showLoginModal.value = false
-  showForgotPasswordModal.value = true
-}
-
-function onForgotPasswordSuccess() {
-  showForgotPasswordModal.value = false
-  showLoginModal.value = true
-}
-
-function toggleUserMenu() {
-  showUserMenu.value = !showUserMenu.value
-}
-
-function handleLogout() {
-  userStore.logout()
-  showUserMenu.value = false
-}
+const router = useRouter()
 
 const currentCategory = ref(null)
 const currentZoneId = ref(0)
@@ -329,7 +177,6 @@ const gridTotalPages = computed(() => Math.max(1, Math.ceil((gridTotal.value || 
 const mediaList = computed(() => (displayMode.value === 'strip' ? stripMediaList.value : gridMediaList.value))
 const loading = computed(() => (displayMode.value === 'strip' ? stripLoading.value : gridLoading.value))
 const members = ref(getMembers())
-const showMemberDropdown = ref(false)
 const contactInfo = ref(getContactInfo())
 const showDetail = ref(false)
 const selectedMediaId = ref(null)
@@ -397,42 +244,17 @@ function switchCategory(category) {
   reloadCurrentMode(true)
 }
 
-function selectZone(zoneId, zoneName) {
-  if (currentZoneId.value === zoneId) {
-    showMemberDropdown.value = false
-    return
-  }
-  currentZoneId.value = zoneId
-  currentZoneName.value = zoneName
-  showMemberDropdown.value = false
-  // 重置两种模式的缓存，确保切换模式时数据与筛选一致
-  stripMediaList.value = []
-  stripPage.value = 1
-  stripHasMore.value = true
-  gridMediaList.value = []
-  gridPage.value = 1
-  gridTotal.value = 0
-  reloadCurrentMode(true)
-}
-
-function toggleMemberDropdown() {
-  showMemberDropdown.value = !showMemberDropdown.value
-}
-
-function handleClickOutside(event) {
-  const memberDropdown = event.target.closest('.member-zone-dropdown')
-  const userDropdown = event.target.closest('.user-menu-dropdown')
-  if (!memberDropdown) showMemberDropdown.value = false
-  if (!userDropdown) showUserMenu.value = false
-}
+// selectZone 函数已移除，由 NavBar 组件统一处理
 
 onMounted(() => {
+  // 设置浏览页面的 SEO
+  setSEO({
+    title: '图片&视频集 - Dragons Zone',
+    description: '浏览所有成员的图片和视频内容，支持按类型和成员专区筛选',
+    keywords: 'Dragons Zone,图片,视频,媒体浏览,后浪'
+  })
+  
   loadStripList(true)
-  document.addEventListener('click', handleClickOutside)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleClickOutside)
 })
 
 function loadMore() {

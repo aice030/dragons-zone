@@ -62,7 +62,7 @@ public class TreeHoleMessage implements Serializable {
     private String content;
 
     /**
-     * 0=未读；1=已读；2=逻辑删除
+     * 0=未读；1=已读；2=逻辑删除；3=已回复
      */
     @TableField("state")
     private Byte state;

@@ -24,6 +24,15 @@ public interface ITreeHoleBlacklistService extends IService<TreeHoleBlacklist> {
     void addBlock(Long ownerId, Long blockedUserId, String reason);
 
     /**
+     * 解除拉黑：将 (owner_id, blocked_user_id) 对应记录的 state 置为解除/失效。
+     * 记录不存在或已是 state=解除 则静默成功（幂等）。写操作重试 3 次，失败时抛 BusinessException。
+     *
+     * @param ownerId      树洞主人 ID（当前登录用户）
+     * @param blockedUserId 被解除拉黑的用户 ID
+     */
+    void removeBlock(Long ownerId, Long blockedUserId);
+
+    /**
      * 判断树洞主人是否已拉黑某用户（仅 state=生效 的记录算拉黑中）
      *
      * @param ownerId      树洞主人用户 ID

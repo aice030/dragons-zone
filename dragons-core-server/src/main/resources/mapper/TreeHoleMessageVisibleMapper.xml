@@ -7,11 +7,12 @@
         <result column="senderId" property="senderId"/>
         <result column="content" property="content"/>
         <result column="state" property="state"/>
+        <result column="rootMessageId" property="rootMessageId"/>
     </resultMap>
 
     <!-- 分享收件箱：联表查询 tree_hole_message_visible + tree_hole_message，只返回未删除的留言 -->
     <select id="selectSharedMessageItems" resultMap="TreeHoleMessageItemResultMap">
-        SELECT m.id, m.sender_id AS senderId, m.content, m.state
+        SELECT m.id, m.sender_id AS senderId, m.content, m.state, m.root_message_id AS rootMessageId
         FROM tree_hole_message_visible v
         INNER JOIN tree_hole_message m ON v.message_id = m.id
         WHERE v.owner_id = #{ownerId}

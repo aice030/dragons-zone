@@ -28,14 +28,22 @@ public class TreeHoleMessagePageResult {
     public static class TreeHoleMessageItem {
         private Long id;
         private Long senderId;
+        private String senderNickName;
         private String content;
         private Byte state;
+        /** 根消息ID，null=根留言，非null=回复 */
+        private Long rootMessageId;
 
-        public TreeHoleMessageItem(Long id, Long senderId, String content, Byte state) {
+        public TreeHoleMessageItem() {
+        }
+
+        public TreeHoleMessageItem(Long id, Long senderId, String senderNickName, String content, Byte state, Long rootMessageId) {
             this.id = id;
             this.senderId = senderId;
+            this.senderNickName = senderNickName;
             this.content = content;
             this.state = state;
+            this.rootMessageId = rootMessageId;
         }
     }
 }

@@ -19,6 +19,14 @@ public interface ITreeHoleService extends IService<TreeHole> {
     TreeHole getByOwnerIdForUpdate(Long ownerId);
 
     /**
+     * 按 owner_id 查询树洞（不加锁，用于普通查询）
+     *
+     * @param ownerId 树洞主人用户ID
+     * @return 树洞实体，如果不存在返回 null
+     */
+    TreeHole getByOwnerId(Long ownerId);
+
+    /**
      * 树洞主人设置树洞状态（允许/禁止投递）
      *
      * @param ownerId 树洞主人用户ID

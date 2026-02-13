@@ -7,6 +7,7 @@ import com.dragons.core.dto.TreeHoleSendMessageRequest;
 import com.dragons.core.dto.TreeHoleSendMessageResult;
 import com.dragons.core.dto.TreeHoleShareRequest;
 import com.dragons.core.dto.TreeHoleUpdateStateRequest;
+import com.dragons.core.entity.TreeHole;
 import com.dragons.core.security.JwtPrincipal;
 import com.dragons.core.service.ITreeHoleMessageService;
 import com.dragons.core.service.ITreeHoleMessageVisibleService;
@@ -95,7 +96,24 @@ public class TreeHoleController {
     }
 
     /**
-     * 树洞主人设置树洞状态（允许/禁止投递）
+     * 获取树洞信息（用于查询树洞状态）
+     * GET /api/treehole/{ownerId}
+     */
+    @GetMapping("/{ownerId}")
+    public Result<TreeHole> getTreeHole(@PathVariable("ownerId") Long ownerId,
+                                        @AuthenticationPrincipal JwtPrincipal principal) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        TreeHole treeHole = treeHoleService.getByOwnerId(ownerId);
+        if (treeHole == null) {
+            return Result.error(ResponseCode.NOT_FOUND);
+        }
+        return Result.success("查询成功", treeHole);
+    }
+
+    /**
+     * 树洞主人或管理员设置树洞状态（允许/禁止投递）
      * PUT /api/treehole/{ownerId}/state
      */
     @PutMapping("/{ownerId}/state")

@@ -169,4 +169,23 @@ public class UserController {
         IUserService.UserListResult result = userService.getUserList(principal.getUserId(), page, size);
         return Result.success("查询成功", result);
     }
+
+    /**
+     * 根据用户ID获取昵称
+     * GET /api/user/{userId}/nickname
+     *
+     * @param userId 用户ID
+     * @return 用户昵称
+     */
+    @GetMapping("/{userId}/nickname")
+    public Result<String> getNickNameById(@PathVariable("userId") Long userId) {
+        if (userId == null) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+        String nickName = userService.getNickNameById(userId);
+        if (nickName == null) {
+            return Result.error(ResponseCode.NOT_FOUND);
+        }
+        return Result.success("查询成功", nickName);
+    }
 }

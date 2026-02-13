@@ -5,6 +5,7 @@ import MediaDetail from '@/views/MediaDetail.vue'
 import MyUploads from '@/views/MyUploads.vue'
 import UploadMedia from '@/views/UploadMedia.vue'
 import ResourceManage from '@/views/ResourceManage.vue'
+import MemberZonePage from '@/views/MemberZonePage.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -77,6 +78,11 @@ const router = createRouter({
           next({ path: '/browse', query: { needLogin: 'true' } })
         }
       }
+    },
+    {
+      path: '/member/:memberId',
+      name: 'MemberZone',
+      component: MemberZonePage
     }
   ],
 })

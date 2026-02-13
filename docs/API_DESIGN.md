@@ -417,7 +417,46 @@ Content-Type: application/json
 
 ---
 
-## 7. 获取用户列表接口
+## 7. 根据用户ID获取昵称接口
+
+### GET /api/user/{userId}/nickname
+
+**功能说明**：根据用户ID获取用户的昵称。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| userId | Long | 是 | 用户ID |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": "用户昵称",
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：
+- 未授权（401）：未登录或Token无效
+- 资源不存在（404）：userId 对应的用户不存在
+- 请求参数错误（400）：userId 为空或无效
+
+**业务逻辑**：
+1. 验证 userId 参数
+2. 查询用户信息
+3. 返回用户的 `nickName` 字段
+4. 如果用户不存在，返回 404
+
+---
+
+## 8. 获取用户列表接口
 
 ### GET /api/user/list
 
@@ -1362,7 +1401,7 @@ Authorization: Bearer <JWT_TOKEN>
 
 ### 通用说明
 - 所有树洞接口都需要登录（携带 `Authorization: Bearer <JWT_TOKEN>`）
-- 留言支持投递与回复：同一接口 `POST /api/treehole/{ownerId}/sent/messages`，请求体可选 `rootMessageId`；为空为投递新留言，非空为树洞主人回复该条留言（仅支持一条回复；回复时根消息自动标已读并写入 `reply_message_id`、`update_time`）
+- 留言支持投递与回复：同一接口 `POST /api/treehole/{ownerId}/sent/messages`，请求体可选 `rootMessageId`；为空为投递新留言，非空为树洞主人回复该条留言（仅支持一条回复；回复时根消息与回复消息均置为 `state=3` 已回复，并写入 `reply_message_id`、`update_time`）
 - 留言可见性：
   - 树洞主人：可查看该树洞全部留言，并修改留言状态
   - 投递者：仅可查看自己投递的留言
@@ -1427,7 +1466,7 @@ Content-Type: application/json
 - **树洞主人回复**（`rootMessageId != null`）：
   1. 校验当前用户为树洞主人
   2. 校验 rootMessageId 对应留言存在、属于该树洞、未删除且未回复（`reply_message_id` 为空）
-  3. 在事务内：插入回复消息（`root_message_id=rootMessageId`，`update_time` 等）；更新根消息：`reply_message_id=新回复 id`、`state=1`（已读）、`update_time`
+  3. 在事务内：插入回复消息（`root_message_id=rootMessageId`，`state=3` 已回复，`update_time` 等）；更新根消息：`reply_message_id=新回复 id`、`state=3`（已回复）、`update_time`
 
 ---
 
@@ -1464,8 +1503,10 @@ Authorization: Bearer <JWT_TOKEN>
       {
         "id": 1,
         "senderId": 10001,
+        "senderNickName": "用户昵称",
         "content": "留言内容",
-        "state": 0
+        "state": 0,
+        "rootMessageId": null
       }
     ]
   },
@@ -1473,9 +1514,19 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
+**响应字段说明**：
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| id | Long | 留言ID |
+| senderId | Long | 发送者用户ID |
+| senderNickName | String | 发送者昵称（可能为null） |
+| content | String | 留言内容 |
+| state | Byte | 状态：0=未读，1=已读，2=已删除，3=已回复（主人回复后根消息置此状态） |
+| rootMessageId | Long | 根消息ID；null=根留言，非null=回复（主人对该根留言的回复） |
+
 **返回规则**：
-- 如果当前用户是 ownerId：返回该树洞全部留言（过滤 `state=2` 的已删除留言）
-- 否则：只返回 `sender_id=当前用户ID` 的留言（同样过滤 `state=2`）
+- 如果当前用户是 ownerId：返回该树洞全部根留言（过滤 `state=2` 的已删除留言；仅 `rootMessageId` 为 null 的根留言，不含主人的回复）
+- 否则：返回 ① 自己投递且未被自己删除的根留言；② 主人回复自己的留言（`root_message_id` 对应消息的 `sender_id` 为当前用户）
 
 ---
 
@@ -1590,11 +1641,50 @@ Authorization: Bearer <JWT_TOKEN>
 
 ---
 
-## 6. 树洞主人设置树洞状态接口（可选）
+## 6. 获取树洞信息接口
+
+### GET /api/treehole/{ownerId}
+
+**功能说明**：根据树洞主人用户ID获取树洞信息（含状态），用于前端展示“关闭树洞/开放树洞”按钮及当前状态。需登录。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| ownerId | Long | 是 | 树洞主人用户ID |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": {
+    "id": 1,
+    "ownerId": 4,
+    "state": 0
+  },
+  "timestamp": 1705564800000
+}
+```
+说明：`data.state`：0=正常（允许投递），1=保留，2=禁止投递
+
+**失败响应**：
+- 未授权（401）
+- 资源不存在（404）：ownerId 对应的树洞不存在
+
+**业务逻辑**：根据 ownerId 查询 tree_hole 表，返回树洞主键、owner_id、state 等；仅登录用户可调用。
+
+---
+
+## 7. 树洞主人设置树洞状态接口
 
 ### PUT /api/treehole/{ownerId}/state
 
-**功能说明**：树洞主人开启/关闭“允许投递”开关。
+**功能说明**：树洞主人开启/关闭“允许投递”开关。仅树洞主人本人可操作。
 
 **请求头**：
 ```
@@ -1613,7 +1703,110 @@ Content-Type: application/json
   "state": 2
 }
 ```
-说明：`state=0` 正常；`state=2` 禁止他人投递新消息
+说明：`state=0` 正常（允许投递）；`state=2` 禁止他人投递新消息
+
+**成功响应**（200）：`data` 为 null，message 为“更新成功”。
+
+**失败响应**：未授权（401）、无权限（403，当前用户非树洞主人）、请求参数错误（400，state 非 0/2）。
+
+---
+
+## 8. 树洞黑名单接口
+
+所有树洞黑名单接口前缀：`/api/treeholeBlacklist`，需登录；仅**树洞主人**可操作（当前用户须为 ownerId 对应树洞的主人）。
+
+### 8.1 查询是否已拉黑
+
+### GET /api/treeholeBlacklist/check
+
+**功能说明**：查询当前用户（树洞主人）是否已拉黑某用户。用于成员专区树洞详情中显示“拉黑该用户”或“解除拉黑”按钮。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**查询参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| blockedUserId | Long | 是 | 被查询用户ID |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": true,
+  "timestamp": 1705564800000
+}
+```
+说明：`data` 为 `true` 表示已拉黑（表中存在且 state=0）；`false` 表示未拉黑或已解除（表中不存在或 state=1）。
+
+**失败响应**：未授权（401）、请求参数错误（400）、无权限（403，当前用户非树洞主人）。
+
+**业务逻辑**：从 JWT 取当前用户为 ownerId，校验其拥有树洞；调用 `isBlocked(ownerId, blockedUserId)`，仅 state=0 视为拉黑。
+
+---
+
+### 8.2 拉黑用户
+
+### POST /api/treeholeBlacklist/block
+
+**功能说明**：树洞主人拉黑某用户，拉黑后该用户无法再向该树洞投递消息（之前已投递的留言仍对主人可见）。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+```
+
+**请求参数**：
+```json
+{
+  "blockedUserId": 10001,
+  "reason": "拉黑原因，可选，可不填"
+}
+```
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| blockedUserId | Long | 是 | 被拉黑用户ID |
+| reason | String | 否 | 拉黑原因，可不填 |
+
+**成功响应**（200）：`data` 为 null，message 为“成功，该用户已被拉黑”。
+
+**失败响应**：未授权（401）、请求参数错误（400）、无权限（403）。若表中已存在该用户且 state=0，可幂等处理为成功。
+
+---
+
+### 8.3 解除拉黑
+
+### POST /api/treeholeBlacklist/unblock
+
+**功能说明**：树洞主人解除对某用户的拉黑（将对应记录的 state 置为 1，解封）。幂等：已解除或不存在则静默成功。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+```
+
+**请求参数**：
+```json
+{
+  "blockedUserId": 10001
+}
+```
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| blockedUserId | Long | 是 | 被解除拉黑的用户ID |
+
+**成功响应**（200）：`data` 为 null，message 为“解除拉黑成功”。
+
+**失败响应**：未授权（401）、无权限（403）。
+
+---
 
 ## 更新日志
 
@@ -1651,3 +1844,21 @@ Content-Type: application/json
   - 新增修改用户等级接口：`PUT /api/user/{targetUserId}/level`（修改指定用户的等级）
   - 新增修改用户状态接口：`PUT /api/user/{targetUserId}/state`（修改指定用户的状态，如拉黑）
   - 新增获取用户列表接口：`GET /api/user/list`（分页获取用户列表，仅作者可操作，不包含作者用户）
+  - 新增根据用户ID获取昵称接口：`GET /api/user/{userId}/nickname`（根据用户ID获取用户昵称）
+  - 更新树洞留言列表接口：返回结果中的 `TreeHoleMessageItem` 新增 `senderNickName` 字段（发送者昵称）
+
+### 2026-02-14
+- 树洞留言列表接口（`TreeHoleMessageItem`）：
+  - 新增 `rootMessageId` 字段（null=根留言，非null=回复）
+  - 新增 `state=3`（已回复）：主人回复后，被回复的根消息置为此状态
+  - 非主人视角：除自己投递的根留言外，还返回主人回复自己的留言（`root_message_id` 对应消息的 `sender_id` 为当前用户）
+  - 树洞主人视角：仅返回根留言（`rootMessageId` 为 null），不包含主人的回复
+- 投递/回复接口（树洞主人回复）：
+  - 回复消息与被回复的根消息均置为 `state=3`（已回复）
+- 树洞扩展接口：
+  - 新增获取树洞信息接口：`GET /api/treehole/{ownerId}`（返回树洞信息含 `state`，供前端展示关闭/开放按钮）
+  - 原“树洞主人设置树洞状态”调整为第 7 节；新增第 6 节“获取树洞信息”
+- 树洞黑名单接口（`/api/treeholeBlacklist`，仅树洞主人可操作）：
+  - 查询是否已拉黑：`GET /api/treeholeBlacklist/check?blockedUserId=xxx`，返回 `data: true/false`
+  - 拉黑用户：`POST /api/treeholeBlacklist/block`，请求体 `blockedUserId`（必填）、`reason`（可选）
+  - 解除拉黑：`POST /api/treeholeBlacklist/unblock`，请求体 `blockedUserId`

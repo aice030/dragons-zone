@@ -1,6 +1,15 @@
 import api from './media'
 
 /**
+ * 根据用户ID获取昵称
+ * @param {number} userId - 用户ID
+ * @returns {Promise} 用户昵称
+ */
+export function getNickNameById(userId) {
+  return api.get(`/api/user/${userId}/nickname`)
+}
+
+/**
  * 用户登录
  * @param {string} loginName - 登录名
  * @param {string} password - 密码

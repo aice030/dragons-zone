@@ -94,6 +94,14 @@ public interface IUserService extends IService<User> {
     UserListResult getUserList(Long currentUserId, Integer page, Integer size);
 
     /**
+     * 根据用户ID获取昵称
+     *
+     * @param userId 用户ID
+     * @return 用户昵称，如果用户不存在返回null
+     */
+    String getNickNameById(Long userId);
+
+    /**
      * 用户列表结果内部类
      */
     class UserListResult {

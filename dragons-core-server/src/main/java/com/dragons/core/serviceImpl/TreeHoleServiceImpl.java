@@ -66,6 +66,16 @@ public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> i
         return baseMapper.selectByOwnerIdForUpdate(ownerId);
     }
 
+    @Override
+    public TreeHole getByOwnerId(Long ownerId) {
+        if (ownerId == null) {
+            return null;
+        }
+        return this.getOne(
+                new LambdaQueryWrapper<TreeHole>().eq(TreeHole::getOwnerId, ownerId)
+        );
+    }
+
     /** 写操作重试：最多 3 次，防止临时网络/锁冲突导致失败 */
     private boolean updateByIdWithRetry(TreeHole treeHole) {
         for (int i = 0; i < WRITE_MAX_RETRIES; i++) {

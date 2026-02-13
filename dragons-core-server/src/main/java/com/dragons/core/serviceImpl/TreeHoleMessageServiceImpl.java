@@ -1,6 +1,7 @@
 package com.dragons.core.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dragons.core.dto.ResponseCode;
@@ -13,6 +14,7 @@ import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.ITreeHoleBlacklistService;
 import com.dragons.core.service.ITreeHoleMessageService;
 import com.dragons.core.service.ITreeHoleService;
+import com.dragons.core.service.IUserService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -37,6 +39,8 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     private static final byte STATE_UNREAD = 0;
     private static final byte STATE_READ = 1;
     private static final byte STATE_DELETED = 2;
+    /** 已回复：主人回复后，被回复的根消息置为此状态 */
+    private static final byte STATE_REPLIED = 3;
     private static final byte TREE_HOLE_STATE_FORBIDDEN = 2;
     private static final byte BLACKLIST_STATE_ACTIVE = 0;
     private static final int WRITE_MAX_RETRIES = 3;
@@ -47,6 +51,8 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     private ITreeHoleBlacklistService treeHoleBlacklistService;
     @Autowired
     private TransactionTemplate transactionTemplate;
+    @Autowired
+    private IUserService userService;
 
     @Override
     public Long sendMessage(Long ownerId, Long senderUserId, String content, Long rootMessageId) {
@@ -146,7 +152,9 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     }
 
     /**
-     * 树洞主人回复：在事务内插入回复并更新根消息（reply_message_id、已读、update_time），保证原子性。
+     * 树洞主人回复：在事务内插入回复并更新根消息（reply_message_id、已回复、update_time），保证原子性。
+     * 回复消息与被回复的根消息均置为 state=3（已回复）。
+     * 如果根消息的 sender_deleted=1（被sender删除），则重置为0，使消息重新对sender可见。
      */
     private Long doReplyMessage(TreeHole treeHole, TreeHoleMessage rootMessage, Long ownerId, String content) {
         Long rootMessageId = rootMessage.getId();
@@ -159,15 +167,20 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
             reply.setSenderDeleted((byte) 0);
             reply.setRootMessageId(rootMessageId);
             reply.setContent(content.trim());
-            reply.setState(STATE_UNREAD);
+            reply.setState(STATE_REPLIED);
             reply.setUpdateTime(LocalDateTime.now());
             boolean replySaved = this.save(reply);
             if (!replySaved) {
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
             rootMessage.setReplyMessageId(reply.getId());
-            rootMessage.setState(STATE_READ);
+            rootMessage.setState(STATE_REPLIED);
             rootMessage.setUpdateTime(LocalDateTime.now());
+            // 如果根消息被sender删除（sender_deleted=1），则重置为0，使消息重新对sender可见
+            Byte senderDeleted = rootMessage.getSenderDeleted();
+            if (senderDeleted != null && senderDeleted == 1) {
+                rootMessage.setSenderDeleted((byte) 0);
+            }
             boolean rootUpdated = this.updateById(rootMessage);
             if (!rootUpdated) {
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
@@ -186,22 +199,31 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         int pageNum = page == null || page < 1 ? 1 : page;
         int pageSize = size == null || size < 1 ? 10 : Math.min(size, 100);
         LambdaQueryWrapper<TreeHoleMessage> treeholeWrapper = new LambdaQueryWrapper<>();
-        // 树洞主人可以查看自己树洞中除被自己删除外的全部留言
+        // 基础筛选：所属树洞、未被主人删除
         treeholeWrapper.eq(TreeHoleMessage::getTreeHoleOwnerId, ownerId).ne(TreeHoleMessage::getState, STATE_DELETED);
-        // 若查看树洞留言的是其他用户，只能看到自己投递，未被树洞主人删除，且未被自己删除的留言
-        if (!viewerUserId.equals(ownerId)) {
-            treeholeWrapper.eq(TreeHoleMessage::getSenderId, viewerUserId)
-                    .and(w
-                            -> w.isNull(TreeHoleMessage::getSenderDeleted)
-                            .or().ne(TreeHoleMessage::getSenderDeleted, 1));
+        if (viewerUserId.equals(ownerId)) {
+            // 树洞主人：仅显示根留言（不包含自己的回复）
+            treeholeWrapper.isNull(TreeHoleMessage::getRootMessageId);
+        } else {
+            // 非主人：① 自己投递且未被自己删除的根留言；② 主人回复自己的且未被自己删除的留言（root_message_id 对应消息的 sender_id 为当前用户）
+            treeholeWrapper.and(w -> w
+                    .and(w1 -> w1.isNull(TreeHoleMessage::getRootMessageId)
+                            .eq(TreeHoleMessage::getSenderId, viewerUserId)
+                            .and(w2 -> w2.isNull(TreeHoleMessage::getSenderDeleted).or().ne(TreeHoleMessage::getSenderDeleted, 1)))
+                    .or()
+                    .apply("root_message_id IS NOT NULL AND (sender_deleted IS NULL OR sender_deleted != 1) AND root_message_id IN (SELECT id FROM tree_hole_message WHERE tree_hole_owner_id = {0} AND sender_id = {1} AND root_message_id IS NULL AND (sender_deleted IS NULL OR sender_deleted != 1))", ownerId, viewerUserId));
         }
         // 未读在前、已读在后；同状态下按最近更新时间升序（越早越靠前）
         treeholeWrapper.orderByAsc(TreeHoleMessage::getState).orderByAsc(TreeHoleMessage::getUpdateTime);
         Page<TreeHoleMessage> pageParam = new Page<>(pageNum, pageSize);
         IPage<TreeHoleMessage> result = this.page(pageParam, treeholeWrapper);
         List<TreeHoleMessagePageResult.TreeHoleMessageItem> list = result.getRecords().stream()
-                .map(m -> new TreeHoleMessagePageResult.TreeHoleMessageItem(
-                        m.getId(), m.getSenderId(), m.getContent(), m.getState()))
+                .map(m -> {
+                    // 查询发送者的昵称
+                    String senderNickName = userService.getNickNameById(m.getSenderId());
+                    return new TreeHoleMessagePageResult.TreeHoleMessageItem(
+                            m.getId(), m.getSenderId(), senderNickName, m.getContent(), m.getState(), m.getRootMessageId());
+                })
                 .collect(Collectors.toList());
         return new TreeHoleMessagePageResult(result.getTotal(), list);
     }
@@ -214,7 +236,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
 
     @Override
     public void deleteMessageByOwner(Long messageId, Long ownerUserId) {
-        // 标记已读就是将tree_hole_message的状态改为2
+        // 将该留言及以其为根消息的回复一并置为 state=2（已删除）
         updateOwnerMessageState(messageId, ownerUserId, STATE_DELETED);
     }
 
@@ -244,13 +266,33 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         if (senderDeleted != null && senderDeleted == 1) {
             return;
         }
-        // 修改sender_deleted状态为1（已删除，该消息对发送者不可见）
-        // 注意，对树洞拥有者仍可见，消息仍是存在，防止用户通过不断删除绕过防刷机制高频投递树洞消息
-        treeHoleMessage.setSenderDeleted((byte) 1);
-        treeHoleMessage.setUpdateTime(LocalDateTime.now());
-        boolean updated = updateByIdWithRetry(treeHoleMessage);
-        if (!updated) {
-            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+        LocalDateTime now = LocalDateTime.now();
+        long replyCount = this.count(new LambdaQueryWrapper<TreeHoleMessage>()
+                .eq(TreeHoleMessage::getRootMessageId, messageId));
+        if (replyCount > 0) {
+            // 有回复：同一事务内先将回复的 sender_deleted 置为 1，再置根留言的 sender_deleted 为 1
+            transactionTemplate.execute(status -> {
+                LambdaUpdateWrapper<TreeHoleMessage> replyUpdateWrapper = new LambdaUpdateWrapper<>();
+                replyUpdateWrapper.eq(TreeHoleMessage::getRootMessageId, messageId)
+                        .set(TreeHoleMessage::getSenderDeleted, (byte) 1)
+                        .set(TreeHoleMessage::getUpdateTime, now);
+                this.update(replyUpdateWrapper);
+                treeHoleMessage.setSenderDeleted((byte) 1);
+                treeHoleMessage.setUpdateTime(now);
+                boolean rootUpdated = this.updateById(treeHoleMessage);
+                if (!rootUpdated) {
+                    throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+                }
+                return null;
+            });
+        } else {
+            // 无回复：仅更新根留言
+            treeHoleMessage.setSenderDeleted((byte) 1);
+            treeHoleMessage.setUpdateTime(now);
+            boolean updated = updateByIdWithRetry(treeHoleMessage);
+            if (!updated) {
+                throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+            }
         }
     }
 
@@ -258,7 +300,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
      * 树洞主人更新留言 state（仅允许更新自己树洞下的留言）
      * 约定：
      * - targetState=1：标记已读（重复标记幂等；已删除不允许再标记已读）
-     * - targetState=2：全局删除（重复删除幂等）
+     * - targetState=2：全局删除（重复删除幂等）；若有 root_message_id=messageId 的回复，一并置为已删除
      */
     private void updateOwnerMessageState(Long messageId, Long ownerUserId, byte targetState) {
         if (messageId == null || messageId <= 0 || ownerUserId == null) {
@@ -290,10 +332,40 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
             if (currentState != null && currentState == STATE_DELETED) {
                 return;
             }
+            LocalDateTime now = LocalDateTime.now();
+            long replyCount = this.count(new LambdaQueryWrapper<TreeHoleMessage>()
+                    .eq(TreeHoleMessage::getRootMessageId, messageId));
+            if (replyCount > 0) {
+                // 有回复：同一事务内先删回复再删根，保证原子性
+                transactionTemplate.execute(status -> {
+                    LambdaUpdateWrapper<TreeHoleMessage> replyDeleteWrapper = new LambdaUpdateWrapper<>();
+                    replyDeleteWrapper.eq(TreeHoleMessage::getRootMessageId, messageId)
+                            .set(TreeHoleMessage::getState, STATE_DELETED)
+                            .set(TreeHoleMessage::getUpdateTime, now);
+                    this.update(replyDeleteWrapper);
+                    treeHoleMessage.setState(STATE_DELETED);
+                    treeHoleMessage.setUpdateTime(now);
+                    boolean rootUpdated = this.updateById(treeHoleMessage);
+                    if (!rootUpdated) {
+                        throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+                    }
+                    return null;
+                });
+            } else {
+                // 无回复：仅更新根留言，无需事务
+                treeHoleMessage.setState(STATE_DELETED);
+                treeHoleMessage.setUpdateTime(now);
+                boolean updated = updateByIdWithRetry(treeHoleMessage);
+                if (!updated) {
+                    throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+                }
+            }
+            return;
         } else {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
+        // 仅 STATE_READ 会执行到此：单条更新
         treeHoleMessage.setState(targetState);
         treeHoleMessage.setUpdateTime(LocalDateTime.now());
         boolean updated = updateByIdWithRetry(treeHoleMessage);

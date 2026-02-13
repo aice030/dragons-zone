@@ -411,4 +411,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         return new IUserService.UserListResult(pageResult.getTotal(), list);
     }
 
+    @Override
+    public String getNickNameById(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        User user = this.getById(userId);
+        return user != null ? user.getNickName() : null;
+    }
 }

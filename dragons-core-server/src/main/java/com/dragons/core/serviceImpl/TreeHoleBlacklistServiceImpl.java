@@ -102,6 +102,28 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
     }
 
     @Override
+    public void removeBlock(Long ownerId, Long blockedUserId) {
+        if (ownerId == null || ownerId <= 0 || blockedUserId == null || blockedUserId <= 0) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        TreeHoleBlacklist existing = this.getOne(
+                new LambdaQueryWrapper<TreeHoleBlacklist>()
+                        .eq(TreeHoleBlacklist::getOwnerId, ownerId)
+                        .eq(TreeHoleBlacklist::getBlockedUserId, blockedUserId));
+        if (existing == null) {
+            return;
+        }
+        if (existing.getState() != null && existing.getState() == STATE_INACTIVE) {
+            return;
+        }
+        existing.setState(STATE_INACTIVE);
+        existing.setUpdateTime(LocalDateTime.now());
+        if (!updateByIdWithRetry(existing)) {
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    @Override
     public boolean isBlocked(Long ownerId, Long blockedUserId) {
         if (ownerId == null || blockedUserId == null) {
             return false;
