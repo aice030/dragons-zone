@@ -44,6 +44,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         if (safeSize > 100) {
             safeSize = 100;
         }
+        // 先确认是成员专区展示（zoneUserId不为null），还是在公共区全量展示（zoneUserId为null）
         long safeZoneUserId = (zoneUserId == null) ? 0L : zoneUserId;
 
         if (category != null && category != 0 && category != 1) {
@@ -54,7 +55,8 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         List<Media> records;
 
         if (safeZoneUserId == 0L) {
-            // 公共区：直接查 media，利用 (state, category, update_time, id) 索引
+            //公共区：直接查media表，利用(state, category, update_time)索引获取特定类别的media(图片/视频)或(state, update_time)索引获取全部类型的media
+            // 先统计记录数量，用于分页中统计记录总数
             LambdaQueryWrapper<Media> countWrapper = new LambdaQueryWrapper<>();
             countWrapper.eq(Media::getState, (byte) 0);
             if (category != null) {
@@ -62,17 +64,20 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             }
             total = mediaMapper.selectCount(countWrapper);
 
+            // 获取media列表
             LambdaQueryWrapper<Media> listWrapper = new LambdaQueryWrapper<>();
+            // 仅获取状态为正常、公开的media(state=0)
             listWrapper.eq(Media::getState, (byte) 0);
             if (category != null) {
                 listWrapper.eq(Media::getCategory, category);
             }
+            // 分页
             int offset = (safePage - 1) * safeSize;
             listWrapper.orderByDesc(Media::getUpdateTime).orderByDesc(Media::getId);
             listWrapper.last("limit " + offset + "," + safeSize);
             records = mediaMapper.selectList(listWrapper);
         } else {
-            // 专区：INNER JOIN media_visible，利用 (user_id, media_id) 与 media 主键
+            // 专区：INNER JOIN media_visible，使用内连接查询，利用 (user_id, media_id) 与 media 主键，达到类似索引的效果，提高查询效率
             total = mediaMapper.countMediaInZone(safeZoneUserId, category);
             long offset = (long) (safePage - 1) * safeSize;
             records = mediaMapper.listMediaInZone(safeZoneUserId, category, offset, safeSize);
@@ -173,6 +178,10 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
     }
 
+
+    /**
+     * 获取当前media的标签（除公共区外，在哪些成员专区可访问到）
+     */
     @Override
     public List<Long> getVisibleUserIdsByMediaId(Long mediaId) {
         if (mediaId == null) {
