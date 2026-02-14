@@ -989,7 +989,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     @Override
-    public IMediaVisibleService.MediaPageResult listPendingMedia(Integer page, Integer size, Long auditorUserId) {
+    public IMediaVisibleService.MediaPageResult listPendingMedia(Integer page, Integer size, Byte category, Long auditorUserId) {
         if (auditorUserId == null) {
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
@@ -1004,13 +1004,19 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             safeSize = 100;
         }
 
-        // 查询待审核媒体（state=6）
+        // 查询待审核媒体（state=6），可选按 category 筛选，复用 idx_media_state_category_update_time 索引
         LambdaQueryWrapper<Media> countWrapper = new LambdaQueryWrapper<>();
         countWrapper.eq(Media::getState, (byte) 6);
+        if (category != null) {
+            countWrapper.eq(Media::getCategory, category);
+        }
         long total = this.count(countWrapper);
 
         LambdaQueryWrapper<Media> listWrapper = new LambdaQueryWrapper<>();
         listWrapper.eq(Media::getState, (byte) 6);
+        if (category != null) {
+            listWrapper.eq(Media::getCategory, category);
+        }
         int offset = (safePage - 1) * safeSize;
         listWrapper.orderByDesc(Media::getUpdateTime).orderByDesc(Media::getId);
         listWrapper.last("limit " + offset + "," + safeSize);

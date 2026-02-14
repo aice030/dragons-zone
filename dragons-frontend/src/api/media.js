@@ -157,10 +157,13 @@ export function deleteMedia(mediaId) {
  * GET /api/media/audit/pending
  * @param {number} page
  * @param {number} size
+ * @param {number|null} category - 类型筛选：null=全部，0=图片，1=视频
  * @returns {Promise} { data: { total, page, size, list } }
  */
-export function getAuditPendingList(page = 1, size = 10) {
-  return api.get('/api/media/audit/pending', { params: { page, size } })
+export function getAuditPendingList(page = 1, size = 10, category = null) {
+  const params = { page, size }
+  if (category !== null) params.category = category
+  return api.get('/api/media/audit/pending', { params })
 }
 
 /**

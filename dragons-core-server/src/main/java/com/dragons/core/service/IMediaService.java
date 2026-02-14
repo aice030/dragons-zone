@@ -143,10 +143,11 @@ public interface IMediaService extends IService<Media> {
      *
      * @param page 页码（从1开始）
      * @param size 每页数量
+     * @param category 类型筛选：null=全部，0=图片，1=视频
      * @param auditorUserId 审核者用户ID（从JWT获取，必须是管理员或作者）
      * @return 待审核媒体列表（state=6）
      */
-    IMediaVisibleService.MediaPageResult listPendingMedia(Integer page, Integer size, Long auditorUserId);
+    IMediaVisibleService.MediaPageResult listPendingMedia(Integer page, Integer size, Byte category, Long auditorUserId);
 
     /**
      * 上传结果（简单内部类，用于 Result<UploadResult> 返回）

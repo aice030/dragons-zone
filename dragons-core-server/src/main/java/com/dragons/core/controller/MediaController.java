@@ -250,18 +250,20 @@ public class MediaController {
     /**
      * 查询待审核媒体列表（仅管理员或作者可访问）
      *
-     * GET /api/media/audit/pending?page=1&size=10
+     * GET /api/media/audit/pending?page=1&size=10&category=0
+     * category 可选：null=全部，0=图片，1=视频
      */
     @GetMapping("/audit/pending")
     public Result<IMediaVisibleService.MediaPageResult> listPendingMedia(
             @AuthenticationPrincipal JwtPrincipal principal,
             @RequestParam(value = "page", required = false, defaultValue = "1") Integer page,
-            @RequestParam(value = "size", required = false, defaultValue = "10") Integer size
+            @RequestParam(value = "size", required = false, defaultValue = "10") Integer size,
+            @RequestParam(value = "category", required = false) Byte category
     ) {
         if (principal == null) {
             return Result.error(ResponseCode.UNAUTHORIZED);
         }
-        IMediaVisibleService.MediaPageResult result = mediaService.listPendingMedia(page, size, principal.getUserId());
+        IMediaVisibleService.MediaPageResult result = mediaService.listPendingMedia(page, size, category, principal.getUserId());
         return Result.success("查询成功", result);
     }
 

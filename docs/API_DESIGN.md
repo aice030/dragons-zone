@@ -811,7 +811,7 @@ Content-Type: multipart/form-data
 
 ---
 
-## 4. 修复/重建媒体可见范围接口（独立操作，方案C：差量同步）
+## 4. 修复/重建媒体可见范围接口（独立操作，差量同步）
 
 ### PUT /api/media/{id}/visible
 
@@ -1862,3 +1862,6 @@ Content-Type: application/json
   - 查询是否已拉黑：`GET /api/treeholeBlacklist/check?blockedUserId=xxx`，返回 `data: true/false`
   - 拉黑用户：`POST /api/treeholeBlacklist/block`，请求体 `blockedUserId`（必填）、`reason`（可选）
   - 解除拉黑：`POST /api/treeholeBlacklist/unblock`，请求体 `blockedUserId`
+- 待审核列表接口（`GET /api/media/audit/pending`）：
+  - 新增 `category` 查询参数（可选）：不传=全部，0=图片，1=视频，后端筛选，复用 `idx_media_state_category_update_time` 索引
+  - 前端 ResourceManage 资源审核筛选由前端过滤改为后端筛选，与 MediaBrowse、资源管理列表统一
