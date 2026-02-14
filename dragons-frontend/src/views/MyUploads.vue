@@ -527,8 +527,10 @@ async function handleBulkDeleteConfirm() {
   border: 1px solid transparent;
   background: transparent;
   color: #fff;
+  font-size: 1.1rem;
   font-weight: 600;
-  font-family: 'ZCOOL XiaoWei', serif;
+  font-family: 'ZCOOL KuaiLe', 'ZCOOL XiaoWei', serif;
+  letter-spacing: 0.12em;
   cursor: pointer;
   transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
