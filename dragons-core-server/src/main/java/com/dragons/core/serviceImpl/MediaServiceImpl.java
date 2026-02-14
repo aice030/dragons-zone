@@ -47,8 +47,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final StorageService storageService;
     private final IMediaVisibleService mediaVisibleService;
     private final IUserService userService;
-    // 默认封面路径
-    private static final String DEFAULT_COVER_PATH = "images/default-cover.jpg";
 
     @Autowired
     public MediaServiceImpl(StorageService storageService, IMediaVisibleService mediaVisibleService, IUserService userService) {
@@ -66,6 +64,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                                String description,
                                MultipartFile cover) {
         if (file == null || file.isEmpty()) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        if (cover == null || cover.isEmpty()) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         validateUploadParams(category, title, description, uploaderUserId);
@@ -265,11 +266,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         final Byte originalState = media.getState();
         final String storagePath = media.getStoragePath();
         final String mediaCoverPath = media.getCoverPath();
-        final String defaultCoverPath = DEFAULT_COVER_PATH;
-        final String coverPath = (mediaCoverPath != null 
-                && !mediaCoverPath.equals(storagePath)
-                && !mediaCoverPath.equals(defaultCoverPath)) 
-                ? mediaCoverPath 
+        // 封面路径与主文件不同说明是视频且上传了封面，需从 MinIO 删除
+        final String coverPath = (mediaCoverPath != null && !mediaCoverPath.equals(storagePath))
+                ? mediaCoverPath
                 : null;
 
         // 第一步：若是首次删除，将 media 的 state 改为 4（正在删除），重试3次
@@ -303,7 +302,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // TODO: 记录日志
             }
         }
-        // 删除封面文件（如果封面路径与主文件路径不同，且不是默认封面路径）
+        // 删除封面文件（与主文件路径不同则从 MinIO 删除）
         if (coverPath != null && !coverPath.trim().isEmpty()) {
             try {
                 storageService.delete(coverPath);
@@ -808,16 +807,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
-     * 上传/更新共用：根据分类与是否上传封面确定封面路径
+     * 上传/更新共用：根据分类确定封面路径（上传时 cover 已校验必填，此处不再判空）
      */
     private String resolveCoverPath(Byte category, String objectName, MultipartFile cover) {
         if (category == 0) {
             return objectName;
         }
-        if (cover != null && !cover.isEmpty()) {
-            return buildCoverObjectName(cover.getOriginalFilename());
-        }
-        return DEFAULT_COVER_PATH;
+        return buildCoverObjectName(cover.getOriginalFilename());
     }
 
     /**

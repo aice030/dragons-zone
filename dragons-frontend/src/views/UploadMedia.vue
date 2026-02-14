@@ -167,7 +167,7 @@
 
           <!-- 封面图 -->
           <div v-if="contentMode === 'video'" class="upload-media-field">
-            <label class="upload-media-field-label">封面</label>
+            <label class="upload-media-field-label">封面 <span class="required">*</span></label>
             <div class="upload-media-cover-wrapper">
               <img
                 v-if="coverPreview"
@@ -274,7 +274,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import NavBar from '@/components/NavBar.vue'
 import { useUserStore } from '@/stores/user'
@@ -321,7 +321,8 @@ const members = getMembers()
 // 是否可以提交
 const canSubmit = computed(() => {
   if (contentMode.value === 'image') return queue.value.length > 0
-  return selectedFile.value !== null
+  // 视频模式：需选择视频文件且选择封面
+  return selectedFile.value !== null && coverFile.value !== null
 })
 
 function setContentMode(mode) {
@@ -528,7 +529,11 @@ async function handleSubmit() {
 
   // 验证
   if (!selectedFile.value) {
-    fileError.value = '请选择文件'
+    fileError.value = '请选择视频文件'
+    return
+  }
+  if (contentMode.value === 'video' && !coverFile.value) {
+    coverError.value = '请选择封面'
     return
   }
 
@@ -544,7 +549,7 @@ async function handleSubmit() {
     fd.append('visibleUserIds', JSON.stringify(form.value.visibleUserIds || []))
     if (form.value.title) fd.append('title', form.value.title)
     if (form.value.description) fd.append('description', form.value.description)
-    if (contentMode.value === 'video' && coverFile.value) fd.append('cover', coverFile.value)
+    if (contentMode.value === 'video') fd.append('cover', coverFile.value)
 
     const res = await uploadMedia(fd)
     if (res && res.code !== 200) {
@@ -602,10 +607,6 @@ async function startBatchUpload() {
 
   batchUploading.value = false
 }
-
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
-})
 
 // 导航栏相关事件监听已移至 NavBar 组件
 // 离开页面时释放批量队列的缩略图 URL（保留此逻辑）

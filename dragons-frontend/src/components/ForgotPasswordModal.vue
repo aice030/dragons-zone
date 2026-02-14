@@ -10,33 +10,36 @@
           <form class="auth-form" @submit.prevent="handleSubmit">
             <p class="form-hint">请输入登录名、账号绑定的手机号和新密码，验证通过后将重置密码。</p>
             <div class="form-group">
-              <label for="fp-loginName">登录名</label>
+              <label for="fp-loginName">登录名 <span class="required">*</span></label>
               <input
                 id="fp-loginName"
                 v-model="form.loginName"
                 type="text"
                 placeholder="请输入登录名"
+                required
                 autocomplete="username"
               />
             </div>
             <div class="form-group">
-              <label for="fp-phone">手机号</label>
+              <label for="fp-phone">手机号 <span class="required">*</span></label>
               <input
                 id="fp-phone"
                 v-model="form.phoneNumber"
                 type="tel"
                 placeholder="手机号"
+                required
                 autocomplete="tel"
               />
             </div>
             <div class="form-group">
-              <label for="fp-new">新密码</label>
+              <label for="fp-new">新密码 <span class="required">*</span></label>
               <div class="input-with-icon">
                 <input
                   id="fp-new"
                   v-model="form.newPassword"
                   :type="showNew ? 'text' : 'password'"
                   placeholder="请输入新密码"
+                  required
                   autocomplete="new-password"
                 />
                 <button
@@ -57,13 +60,14 @@
               </div>
             </div>
             <div class="form-group">
-              <label for="fp-confirm">确认新密码</label>
+              <label for="fp-confirm">确认新密码 <span class="required">*</span></label>
               <div class="input-with-icon">
                 <input
                   id="fp-confirm"
                   v-model="form.confirmPassword"
                   :type="showConfirm ? 'text' : 'password'"
                   placeholder="请再次输入新密码"
+                  required
                   autocomplete="new-password"
                 />
                 <button
@@ -136,15 +140,23 @@ async function handleSubmit() {
     errorMsg.value = '请输入登录名'
     return
   }
-  const phone = form.value.phoneNumber.replace(/\D/g, '')
+  if (!form.value.phoneNumber?.trim()) {
+    errorMsg.value = '请输入手机号'
+    return
+  }
   if (!form.value.newPassword) {
     errorMsg.value = '请输入新密码'
+    return
+  }
+  if (!form.value.confirmPassword) {
+    errorMsg.value = '请再次输入新密码'
     return
   }
   if (form.value.newPassword !== form.value.confirmPassword) {
     errorMsg.value = '两次输入的新密码不一致'
     return
   }
+  const phone = form.value.phoneNumber.replace(/\D/g, '')
   loading.value = true
   try {
     const res = await forgotPassword(form.value.loginName.trim(), phone, form.value.newPassword)
@@ -232,6 +244,11 @@ async function handleSubmit() {
   margin-bottom: 0.35rem;
   font-size: 0.9rem;
   color: #555;
+}
+
+.form-group label .required {
+  color: #e74c3c;
+  font-size: 0.8rem;
 }
 
 .form-group input {

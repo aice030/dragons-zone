@@ -10,12 +10,13 @@
           <div class="modal-body">
             <p class="confirm-desc">您上传的图片、视频以及树洞消息仍会保留。</p>
             <div class="form-group">
-              <label for="deregister-password">请输入当前密码以确认</label>
+              <label for="deregister-password">请输入当前密码以确认 <span class="required">*</span></label>
               <input
                 id="deregister-password"
                 v-model="password"
                 type="password"
                 placeholder="当前密码"
+                required
                 autocomplete="current-password"
               />
             </div>
@@ -150,6 +151,11 @@ async function handleConfirm() {
   margin-bottom: 0.35rem;
   font-size: 0.9rem;
   color: #555;
+}
+
+.form-group label .required {
+  color: #e74c3c;
+  font-size: 0.8rem;
 }
 
 .form-group input {

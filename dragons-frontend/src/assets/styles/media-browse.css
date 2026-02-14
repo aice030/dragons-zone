@@ -1478,6 +1478,11 @@
   display: block;
 }
 
+.upload-media-field-label .required {
+  color: #e74c3c;
+  font-size: 0.8rem;
+}
+
 .upload-media-field-header {
   display: flex;
   justify-content: space-between;

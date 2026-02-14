@@ -9,7 +9,7 @@
           </div>
           <form class="auth-form" @submit.prevent="handleSubmit">
             <div class="form-group">
-              <label for="login-loginName">登录名</label>
+              <label for="login-loginName">登录名 <span class="required">*</span></label>
               <input
                 id="login-loginName"
                 v-model="form.loginName"
@@ -20,7 +20,7 @@
               />
             </div>
             <div class="form-group">
-              <label for="login-password">密码</label>
+              <label for="login-password">密码 <span class="required">*</span></label>
               <div class="input-with-icon">
                 <input
                   id="login-password"
@@ -91,8 +91,12 @@ function close() {
 
 async function handleSubmit() {
   errorMsg.value = ''
-  if (!form.value.loginName?.trim() || !form.value.password) {
-    errorMsg.value = '请填写登录名和密码'
+  if (!form.value.loginName?.trim()) {
+    errorMsg.value = '请输入登录名'
+    return
+  }
+  if (!form.value.password) {
+    errorMsg.value = '请输入密码'
     return
   }
   loading.value = true
@@ -169,6 +173,11 @@ async function handleSubmit() {
   margin-bottom: 0.35rem;
   font-size: 0.9rem;
   color: #555;
+}
+
+.form-group label .required {
+  color: #e74c3c;
+  font-size: 0.8rem;
 }
 
 .input-with-icon {

@@ -9,7 +9,7 @@
           </div>
           <form class="auth-form" @submit.prevent="handleSubmit">
             <div class="form-group">
-              <label for="reg-loginName">登录名</label>
+              <label for="reg-loginName">登录名 <span class="required">*</span></label>
               <input
                 id="reg-loginName"
                 v-model="form.loginName"
@@ -20,7 +20,7 @@
               />
             </div>
             <div class="form-group">
-              <label for="reg-password">密码</label>
+              <label for="reg-password">密码 <span class="required">*</span></label>
               <div class="input-with-icon">
                 <input
                   id="reg-password"
@@ -48,7 +48,7 @@
               </div>
             </div>
             <div class="form-group">
-              <label for="reg-nickName">昵称</label>
+              <label for="reg-nickName">昵称 <span class="required">*</span></label>
               <input
                 id="reg-nickName"
                 v-model="form.nickName"
@@ -58,7 +58,7 @@
               />
             </div>
             <div class="form-group">
-              <label for="reg-phoneNumber">手机号</label>
+              <label for="reg-phoneNumber">手机号 <span class="required">*</span></label>
               <input
                 id="reg-phoneNumber"
                 v-model="form.phoneNumber"
@@ -113,8 +113,20 @@ function close() {
 async function handleSubmit() {
   errorMsg.value = ''
   const { loginName, password, nickName, phoneNumber } = form.value
-  if (!loginName?.trim() || !password || !nickName?.trim() || !phoneNumber?.trim()) {
-    errorMsg.value = '请填写全部字段'
+  if (!loginName?.trim()) {
+    errorMsg.value = '请输入登录名'
+    return
+  }
+  if (!password) {
+    errorMsg.value = '请输入密码'
+    return
+  }
+  if (!nickName?.trim()) {
+    errorMsg.value = '请输入昵称'
+    return
+  }
+  if (!phoneNumber?.trim()) {
+    errorMsg.value = '请输入手机号'
     return
   }
   const phone = phoneNumber.replace(/\D/g, '')
@@ -197,6 +209,11 @@ async function handleSubmit() {
   margin-bottom: 0.35rem;
   font-size: 0.9rem;
   color: #555;
+}
+
+.form-group label .required {
+  color: #e74c3c;
+  font-size: 0.8rem;
 }
 
 .input-with-icon {

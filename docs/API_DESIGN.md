@@ -636,7 +636,7 @@ Content-Type: multipart/form-data
 | visibleUserIds | String | 是 | JSON数组字符串，例如 `[1,2,3]` 或 `[]`（必填，但可以为空数组，表示要展示到哪些成员专区） |
 | title | String | 否 | 标题（可选） |
 | description | String | 否 | 描述（可选） |
-| cover | MultipartFile | 否 | 封面图片（可选，仅视频建议传；不传则后端自动生成/使用默认封面策略） |
+| cover | MultipartFile | 是 | 封面图片（必填） |
 
 **支持的图片格式**：jpg, jpeg, png, gif, webp, bmp
 
@@ -700,15 +700,16 @@ Content-Type: multipart/form-data
 
 **业务逻辑**：
 1. 验证JWT Token并获取当前用户ID
-2. 验证文件格式（根据category检查扩展名）
-3. 生成对象存储路径（格式：`{category}/yyyy/MM/dd/{uuid}-{filename}`）
-4. 先保存 media 记录（state=1 正在上传），再上传主文件到 MinIO
-5. MinIO 上传成功后，将 media 的 state 更新为 2（上传成功）并写库；**仅当这一步写库失败时**：删除已上传的 MinIO 对象、删除该 media 记录，并返回上传失败
-6. 保存 media_visible 记录（用于“成员专区筛选”，不是权限系统）：
+2. 校验 cover 必填：若 cover 为空或未传，返回 400（请求参数错误）
+3. 验证文件格式（根据category检查扩展名）
+4. 生成对象存储路径（格式：`{category}/yyyy/MM/dd/{uuid}-{filename}`）
+5. 先保存 media 记录（state=1 正在上传），再上传主文件到 MinIO
+6. MinIO 上传成功后，将 media 的 state 更新为 2（上传成功）并写库；**仅当这一步写库失败时**：删除已上传的 MinIO 对象、删除该 media 记录，并返回上传失败
+7. 保存 media_visible 记录（用于“成员专区筛选”，不是权限系统）：
    - **不再写入公共区 `user_id=0`**：公共区展示直接查询 `media` 表（永远全部公开）
    - 遍历 visibleUserIds：写入成员专区ID列表
    - 若 media_visible 保存成功，将 media 的 state 更新为 6（待审核）并写库；若 media_visible 写库失败，不删 MinIO，media 保持 state=2，可后续通过「可见范围修复」接口重试
-7. （可选）上传封面到 MinIO（如果传了 `cover`）
+8. 上传封面到 MinIO（cover 已校验必填）
 
 **注意**：上传完成后，媒体状态为 `state=6`（待审核），需要管理员或作者审核通过后才能公开显示（`state=0`）。
 

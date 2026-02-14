@@ -63,7 +63,6 @@
       <div class="myuploads-layout">
         <!-- 左侧控制台 -->
         <aside class="myuploads-sidenav" aria-label="我的上传控制台">
-          <div class="myuploads-sidenav-title">控制台</div>
           <button
             type="button"
             class="myuploads-sidenav-item"
@@ -510,19 +509,13 @@ async function handleBulkDeleteConfirm() {
   flex: 0 0 200px;
   padding: 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
   height: fit-content;
   position: sticky;
   top: 88px;
-}
-
-.myuploads-sidenav-title {
-  font-size: 12px;
-  opacity: 0.75;
-  margin-bottom: 10px;
-  letter-spacing: 1px;
 }
 
 .myuploads-sidenav-item {
@@ -533,9 +526,11 @@ async function handleBulkDeleteConfirm() {
   border-radius: 10px;
   border: 1px solid transparent;
   background: transparent;
-  color: rgba(255, 255, 255, 0.9);
+  color: #fff;
+  font-weight: 600;
+  font-family: 'ZCOOL XiaoWei', serif;
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .myuploads-sidenav-item + .myuploads-sidenav-item {
@@ -543,12 +538,15 @@ async function handleBulkDeleteConfirm() {
 }
 
 .myuploads-sidenav-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
 }
 
 .myuploads-sidenav-item.active {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(74, 144, 226, 0.35);
+  border-color: rgba(74, 144, 226, 0.5);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(74, 144, 226, 0.25);
 }
 
 .myuploads-main {

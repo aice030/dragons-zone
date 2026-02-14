@@ -49,7 +49,7 @@ public class MediaController {
      * - visibleUserIds: JSON数组字符串，例如 [1,2,3] 或 []（必填，但可以为空数组）
      * - title: 标题（可选）
      * - description: 描述（可选）
-     * - cover: 封面图片（可选，如果提供则使用用户上传的封面）
+     * - cover: 封面图片（必填）
      */
     @PostMapping("/upload")
     public Result<IMediaService.UploadResult> upload(
@@ -59,7 +59,7 @@ public class MediaController {
             @RequestParam("visibleUserIds") String visibleUserIdsJson,
             @RequestParam(value = "title", required = false) String title,
             @RequestParam(value = "description", required = false) String description,
-            @RequestPart(value = "cover", required = false) MultipartFile cover
+            @RequestPart(value = "cover", required = true) MultipartFile cover
     ) {
         if (principal == null) {
             return Result.error(ResponseCode.UNAUTHORIZED);

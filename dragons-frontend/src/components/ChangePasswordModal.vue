@@ -10,23 +10,25 @@
           <form class="auth-form" @submit.prevent="handleSubmit">
             <p class="form-hint">请输入账号绑定的手机号和新密码</p>
             <div class="form-group">
-              <label for="cp-phone">手机号</label>
+              <label for="cp-phone">手机号 <span class="required">*</span></label>
               <input
                 id="cp-phone"
                 v-model="form.phoneNumber"
                 type="tel"
                 placeholder="手机号"
+                required
                 autocomplete="tel"
               />
             </div>
             <div class="form-group">
-              <label for="cp-new">新密码</label>
+              <label for="cp-new">新密码 <span class="required">*</span></label>
               <div class="input-with-icon">
                 <input
                   id="cp-new"
                   v-model="form.newPassword"
                   :type="showNew ? 'text' : 'password'"
                   placeholder="请输入新密码"
+                  required
                   autocomplete="new-password"
                 />
                 <button
@@ -47,13 +49,14 @@
               </div>
             </div>
             <div class="form-group">
-              <label for="cp-confirm">确认新密码</label>
+              <label for="cp-confirm">确认新密码 <span class="required">*</span></label>
               <div class="input-with-icon">
                 <input
                   id="cp-confirm"
                   v-model="form.confirmPassword"
                   :type="showConfirm ? 'text' : 'password'"
                   placeholder="请再次输入新密码"
+                  required
                   autocomplete="new-password"
                 />
                 <button
@@ -73,9 +76,10 @@
                 </button>
               </div>
             </div>
-            <p v-if="errorMsg" class="form-error">{{ errorMsg }}</p>
+            <p v-if="passwordMismatch" class="form-error">两次输入的新密码不一致</p>
+            <p v-else-if="errorMsg" class="form-error">{{ errorMsg }}</p>
             <p v-if="successMsg" class="form-success">{{ successMsg }}</p>
-            <button type="submit" class="btn-submit" :disabled="loading">确认修改</button>
+            <button type="submit" class="btn-submit" :disabled="loading || passwordMismatch">确认修改</button>
           </form>
         </div>
       </div>
@@ -84,7 +88,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { resetPasswordByPhone } from '@/api/user'
 
 const props = defineProps({
@@ -104,6 +108,12 @@ const loading = ref(false)
 const showNew = ref(false)
 const showConfirm = ref(false)
 
+// 新密码与确认密码一致性校验
+const passwordMismatch = computed(() => {
+  const { newPassword, confirmPassword } = form.value
+  return newPassword && confirmPassword && newPassword !== confirmPassword
+})
+
 watch(() => props.visible, (v) => {
   if (v) {
     form.value = { phoneNumber: '', newPassword: '', confirmPassword: '' }
@@ -121,15 +131,23 @@ function close() {
 async function handleSubmit() {
   errorMsg.value = ''
   successMsg.value = ''
-  const phone = form.value.phoneNumber.replace(/\D/g, '')
+  if (!form.value.phoneNumber?.trim()) {
+    errorMsg.value = '请输入手机号'
+    return
+  }
   if (!form.value.newPassword) {
     errorMsg.value = '请输入新密码'
+    return
+  }
+  if (!form.value.confirmPassword) {
+    errorMsg.value = '请再次输入新密码'
     return
   }
   if (form.value.newPassword !== form.value.confirmPassword) {
     errorMsg.value = '两次输入的新密码不一致'
     return
   }
+  const phone = form.value.phoneNumber.replace(/\D/g, '')
   loading.value = true
   try {
     const res = await resetPasswordByPhone(phone, form.value.newPassword)
@@ -217,6 +235,11 @@ async function handleSubmit() {
   margin-bottom: 0.35rem;
   font-size: 0.9rem;
   color: #555;
+}
+
+.form-group label .required {
+  color: #e74c3c;
+  font-size: 0.8rem;
 }
 
 .form-group input {
