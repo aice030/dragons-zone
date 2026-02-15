@@ -22,10 +22,6 @@
         <path d="M24 18L24 42L42 30L24 18Z" fill="white"/>
       </svg>
     </div>
-    
-    <div v-if="title" class="media-card-overlay">
-      <h3 class="media-card-title">{{ title }}</h3>
-    </div>
   </div>
 </template>
 

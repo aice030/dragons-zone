@@ -136,7 +136,7 @@
   pointer-events: auto;
 }
 
-/* 描述（媒体下方） */
+/* 描述（媒体下方）：含标题+描述，悬浮下部触发区才显示 */
 .media-description-under {
   position: absolute;
   left: 50%;
@@ -155,6 +155,17 @@
   white-space: pre-wrap;
   opacity: 0;
   transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.media-description-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  line-height: 1.4;
+}
+
+.media-description-text {
+  margin: 0;
 }
 
 /* 抖音式：只有悬浮到下部区域才显示描述 */
