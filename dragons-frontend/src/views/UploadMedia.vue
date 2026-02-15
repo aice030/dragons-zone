@@ -586,6 +586,8 @@ async function startBatchUpload() {
     try {
       const fd = new FormData()
       fd.append('file', item.file)
+      // 图片类型：封面即为该图片本身
+      fd.append('cover', item.file)
       fd.append('category', String(category))
       fd.append('visibleUserIds', JSON.stringify(form.value.visibleUserIds || []))
       if (form.value.title) fd.append('title', form.value.title)
