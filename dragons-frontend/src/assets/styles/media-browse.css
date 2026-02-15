@@ -1684,13 +1684,55 @@
   color: var(--text-secondary, rgba(44, 62, 80, 0.7));
 }
 
-/* 批量上传队列列表 */
+/* 批量上传队列列表：固定高度约 8 行，超出部分通过滚动条上下拖动查看 */
 .upload-queue-wrapper {
   margin-top: 1rem;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 10px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.upload-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: #f0f6fc;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px 10px 0 0;
+}
+
+.upload-queue-count {
+  font-size: 0.88rem;
+  color: var(--text-secondary, rgba(44, 62, 80, 0.7));
+  margin-right: auto;
+}
+
+.upload-queue-clear-btn {
+  padding: 0.35rem 0.85rem;
+  font-size: 0.88rem;
+  color: var(--accent-color, #4a90e2);
+  background: rgba(74, 144, 226, 0.1);
+  border: 1px solid rgba(74, 144, 226, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.upload-queue-clear-btn:hover:not(:disabled) {
+  background: rgba(74, 144, 226, 0.18);
+}
+
+.upload-queue-clear-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.upload-queue-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 460px; /* 约 8 行 */
 }
 
 .upload-queue-table {
@@ -1699,7 +1741,11 @@
 }
 
 .upload-queue-table thead {
-  background: rgba(74, 144, 226, 0.08);
+  background: #f0f6fc;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
 }
 
 .upload-queue-table th,

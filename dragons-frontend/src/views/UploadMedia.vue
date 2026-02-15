@@ -84,6 +84,18 @@
             <p v-else-if="batchInfo" class="batch-info">{{ batchInfo }}</p>
 
             <div v-if="queue.length > 0" class="upload-queue-wrapper">
+              <div class="upload-queue-header">
+                <span class="upload-queue-count">待处理 {{ displayQueue.length }} 张</span>
+                <button
+                  type="button"
+                  class="upload-queue-clear-btn"
+                  :disabled="batchUploading"
+                  @click="clearQueue"
+                >
+                  清空
+                </button>
+              </div>
+              <div class="upload-queue-scroll">
               <table class="upload-queue-table">
                 <thead>
                   <tr>
@@ -93,7 +105,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <template v-for="item in queue" :key="item.key">
+                  <template v-for="item in displayQueue" :key="item.key">
                     <tr>
                       <td class="queue-file">
                         <div class="queue-file-main">
@@ -137,6 +149,7 @@
                   </template>
                 </tbody>
               </table>
+              </div>
             </div>
           </div>
 
@@ -318,6 +331,11 @@ const form = ref({
 
 const members = getMembers()
 
+// 展示用队列：不显示已上传成功的图片
+const displayQueue = computed(() =>
+  queue.value.filter((item) => item.status !== 'success')
+)
+
 // 是否可以提交
 const canSubmit = computed(() => {
   if (contentMode.value === 'image') return queue.value.length > 0
@@ -446,6 +464,7 @@ function handleBatchPick(event) {
 }
 
 function clearQueue() {
+  if (batchUploading.value) return
   // 释放本地预览 URL，避免内存泄露
   for (const item of queue.value) {
     if (item?.previewUrl) {
