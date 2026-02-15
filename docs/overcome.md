@@ -199,3 +199,18 @@
 
 - **Wrapper**：单表、条件在 Java 里链式拼装，MyBatis-Plus 根据实体表名生成 SQL，**不需要写 XML**。
 - **联表**：多表、JOIN 和复杂条件写在 **XML 的一条 SQL** 里；Mapper 接口只声明方法签名，**参数通过 @Param 传到 XML 的 #{}**，返回类型由 XML 的 resultMap/resultType 决定。
+
+---
+
+## 对象存储抽象：策略模式与实现
+
+### 设计思路
+- **策略模式**：上传、删除、存在性检查、预签名 URL 等同一类操作，多种实现可替换；调用方只依赖接口，不关心具体存储（MinIO/OSS）。
+- **依赖倒置**：业务层（MediaServiceImpl、MediaVisibleServiceImpl）依赖 `StorageService` 接口，不依赖具体实现类；扩展新存储只需新增实现类并配置，业务代码无需改动。
+- **运行时切换**：通过 Spring 依赖注入在运行时绑定具体实现（如 `@Primary` 指定默认实现），切换存储仅改配置或 Bean 条件即可。
+
+### 实现方式
+- **接口**：`StorageService`（upload 两种重载、delete、exists、getPresignedUrl）。
+- **实现**：`MinioStorageService`、`OssStorageService` 实现该接口；当前默认 OSS（`OssStorageService` 标注 `@Primary`）。
+- **配置**：`oss.*` / `minio.*` 在 application.yml 中配置；`OssConfig`、`MinioConfig` 分别创建 OSS 客户端或 MinioClient Bean。
+- **业务层**：仅注入 `StorageService`，所有读写通过接口完成，与具体存储解耦。

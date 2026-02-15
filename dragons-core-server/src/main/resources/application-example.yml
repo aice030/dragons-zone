@@ -22,9 +22,16 @@ jwt:
   secret: 你的JWT密钥（生产环境请使用足够长且随机的字符串）
   expiration: 604800000  # 过期时间（毫秒），如 7 天
 
-# MinIO 配置
+# MinIO 配置（若使用 MinIO 存储）
 minio:
   endpoint: 你的MinIO服务地址（如 http://localhost:9000）
   access-key: 你的MinIO访问键
   secret-key: 你的MinIO私钥
   bucket: 你的存储桶名称
+
+# 阿里云 OSS 配置（若使用阿里云 OSS 存储，需在 RAM 控制台创建 AccessKey）
+oss:
+  endpoint: OSS 地域节点（如 oss-cn-beijing.aliyuncs.com，不要加 https:// 前缀）
+  access-key-id: 你的阿里云 RAM AccessKeyId
+  access-key-secret: 你的阿里云 RAM AccessKeySecret
+  bucket: 你的 OSS Bucket 名称（如 dragons-media）

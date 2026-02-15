@@ -103,7 +103,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             );
         }
 
-        // 6) 生成MinIO路径
+        // 6) 生成对象存储路径
         String objectName = buildObjectName(file.getOriginalFilename(), category);
         String coverPath = resolveCoverPath(category, objectName, cover);
 
@@ -126,7 +126,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
 
-        // 9) 上传媒体文件到 MinIO（使用字节数组上传）
+        // 9) 上传媒体文件到对象存储（使用字节数组上传）
         try {
             uploadMainFileToStorage(fileBytes, file.getContentType(), objectName);
         } catch (BusinessException e) {
@@ -144,7 +144,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (!updated) {
             // 更新状态失败，清理已上传的文件和数据库记录
             try {
-                // 删除 MinIO 中的文件
+                // 删除对象存储中的文件
                 storageService.delete(objectName);
             } catch (Exception e) {
                 // 删除失败，记录日志（不影响主流程）
@@ -174,7 +174,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             // TODO: 记录日志或提供重试机制
         }
 
-        // 12) 上传封面文件到 MinIO（如果用户提供了封面）
+        // 12) 上传封面文件到对象存储（如果用户提供了封面）
         uploadCoverToStorageIfPresent(cover, coverPath);
 
         return new UploadResult(media.getId(), objectName, category, visibleUserIds);
@@ -219,9 +219,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
 
-        // 2. 检查MinIO中文件是否实际存在（防止缓存不一致导致的问题）
+        // 2. 检查对象存储中文件是否实际存在（防止缓存不一致导致的问题）
         if (!storageService.exists(media.getStoragePath())) {
-            // MinIO中文件不存在，返回404
+            // 对象存储中文件不存在，返回404
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -240,7 +240,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
         // 1) 查询 media 并校验所有权（不通过则按“资源不存在”处理）
         Media media = this.getById(mediaId);
-        // 仅排除已删除（state=5）；state=4（正在删除）允许再次进入，用于收尾清理 visible/MinIO 并置为 5，解决中途失败的一致性问题
+        // 仅排除已删除（state=5）；state=4（正在删除）允许再次进入，用于收尾清理 visible/对象存储 并置为 5，解决中途失败的一致性问题
         if (media == null || media.getState() == 5) {
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
@@ -266,7 +266,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         final Byte originalState = media.getState();
         final String storagePath = media.getStoragePath();
         final String mediaCoverPath = media.getCoverPath();
-        // 封面路径与主文件不同说明是视频且上传了封面，需从 MinIO 删除
+        // 封面路径与主文件不同说明是视频且上传了封面，需从对象存储删除
         final String coverPath = (mediaCoverPath != null && !mediaCoverPath.equals(storagePath))
                 ? mediaCoverPath
                 : null;
@@ -292,7 +292,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
 
-        // 3) 删除media_visible成功后，再删除 MinIO 对象，保证即使出错也不会让用户感知到
+        // 3) 删除 media_visible 成功后，再删除对象存储中的对象，保证即使出错也不会让用户感知到
         // 删除主文件
         if (storagePath != null && !storagePath.trim().isEmpty()) {
             try {
@@ -302,7 +302,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // TODO: 记录日志
             }
         }
-        // 删除封面文件（与主文件路径不同则从 MinIO 删除）
+        // 删除封面文件（与主文件路径不同则从对象存储删除）
         if (coverPath != null && !coverPath.trim().isEmpty()) {
             try {
                 storageService.delete(coverPath);
@@ -463,7 +463,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
 
-        // 1) 先上传 MinIO，失败直接返回封面上传失败
+        // 1) 先上传对象存储，失败直接返回封面上传失败
         try {
             storageService.upload(coverBytes, cover.getContentType(), coverPath);
         } catch (Exception e) {
@@ -817,7 +817,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
-     * 上传/更新共用：主文件上传到 MinIO，失败抛 FILE_UPLOAD_FAILED
+     * 上传/更新共用：主文件上传到对象存储，失败抛 FILE_UPLOAD_FAILED
      */
     private void uploadMainFileToStorage(byte[] fileBytes, String contentType, String objectName) {
         try {
@@ -844,11 +844,11 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
-     * 生成封面文件的MinIO路径
+     * 生成封面文件的对象存储路径
      * 封面统一存放在 images/covers 目录下
      *
      * @param originalFilename 原始文件名
-     * @return MinIO对象路径
+     * @return 对象存储中的对象路径
      */
     private String buildCoverObjectName(String originalFilename) {
         String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
@@ -975,7 +975,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             // 更新状态为 7（审核未通过）
             media.setState((byte) 7);
             media.setUpdateTime(LocalDateTime.now());
-            // 逐个更新，失败则记录到失败列表（驳回后保留 MinIO 文件和 media_visible，用户可修改后重新提交）
+            // 逐个更新，失败则记录到失败列表（驳回后保留对象存储中的文件和 media_visible，用户可修改后重新提交）
             if (!this.updateById(media)) {
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
             }

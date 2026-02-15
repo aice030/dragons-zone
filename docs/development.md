@@ -12,7 +12,7 @@
 - **数据库**: MySQL
 - **ORM**: MyBatis-Plus 3.5.15
 - **安全**: Spring Security + JWT
-- **对象存储**: MinIO（本地开发，MVP阶段），预留接口便于未来迁移到阿里云OSS
+- **对象存储**: 阿里云 OSS（当前默认，`OssStorageService` 为 `@Primary`）；MinIO 依赖与实现保留，可作本地开发或切换
 - **构建工具**: Maven
 
 ### 前端
@@ -49,7 +49,7 @@ dragons-zone/
 - **用户角色**: 支持作者、管理员、普通用户、游客四种角色
 
 #### 2. 媒体文件管理
-- **文件上传**: 支持图片和视频文件的上传到阿里云OSS
+- **文件上传**: 支持图片和视频文件的上传到对象存储（当前为阿里云 OSS）
 - **文件查看**: 支持公共区/成员专区的媒体浏览（专区用于筛选展示）
 - **文件下载**: 支持媒体文件的下载功能
 - **文件删除**: 支持文件删除（逻辑删除）
@@ -74,7 +74,7 @@ dragons-zone/
 
 2. **media** - 媒体资源表
    - 存储图片/视频的元数据信息
-   - storage_path字段存储阿里云OSS的资源地址
+   - **storage_path** 存储对象存储中的对象路径（当前使用阿里云 OSS，路径如 `images/yyyy/MM/dd/xxx.jpg`）
 
 3. **media_visible** - 媒体可见性表
    - 控制媒体文件的访问权限
@@ -93,15 +93,14 @@ dragons-zone/
 
 ## 文件存储方案
 
-### 对象存储（MVP阶段：MinIO，未来：阿里云OSS）
-- **MVP阶段**: 使用MinIO本地对象存储（便于开发调试，节约成本）
-- **未来迁移**: 预留StorageService抽象接口，迁移到阿里云OSS只需替换实现类
-- **存储方式**: 对象存储服务存储实际文件
-- **数据库存储**: MySQL中仅存储对象存储路径（storage_path字段）
-- **文件格式**: 
-  - 图片：jpg, jpeg, png, gif, webp, bmp等常见格式
-  - 视频：mp4, avi, mov, wmv, flv, mkv等常见格式
-- **文件大小**: MVP阶段暂不限制（后续优化时添加）
+### 对象存储（当前：阿里云 OSS，可选：MinIO）
+- **当前默认**: 使用阿里云 OSS（`OssStorageService` 实现 `StorageService` 并标注 `@Primary`），配置项为 `oss.endpoint`、`oss.access-key-id`、`oss.access-key-secret`、`oss.bucket`。
+- **可选保留**: MinIO 依赖与 `MinioStorageService`/`MinioConfig` 仍保留，可用于本地开发或通过配置切换；`application.yml` 中同时存在 `minio.*` 与 `oss.*` 时，注入的 `StorageService` 为 OSS。
+- **存储方式**: 对象存储服务存储实际文件；MySQL 仅存储对象路径（`storage_path`、`cover_path`）。
+- **文件格式**:
+  - 图片：jpg, jpeg, png, gif, webp, bmp 等常见格式
+  - 视频：mp4, avi, mov, wmv, flv, mkv 等常见格式
+- **文件大小**: MVP 阶段暂不限制（后续优化时添加）
 - **专区展示**: 项目采用“永远全部公开”的产品定义：
   - 公共区列表直接查询 `media`（`state=0`），不依赖 `media_visible`
   - `media_visible` 仅用于成员专区筛选：需要展示到某成员专区时，写入 `user_id=成员ID`
@@ -125,23 +124,26 @@ dragons-zone/
 - [x] 配置Spring Security集成JWT
 
 #### 步骤2：对象存储集成 ✅
-- [x] 添加MinIO SDK依赖（MVP阶段使用MinIO本地开发）
-- [x] 配置MinIO连接信息（Endpoint、AccessKey等）
-- [x] 创建存储抽象接口（StorageService），便于未来迁移到阿里云OSS
-- [x] 实现MinIO存储服务（MinioStorageService）
+- [x] 添加 MinIO SDK 依赖（可选保留，用于本地开发）
+- [x] 添加阿里云 OSS SDK 依赖（aliyun-sdk-oss），当前默认使用 OSS
+- [x] 配置 MinIO 连接信息（`minio.*`，可选）
+- [x] 配置阿里云 OSS 连接信息（`oss.endpoint`、`oss.access-key-id`、`oss.access-key-secret`、`oss.bucket`）
+- [x] 创建存储抽象接口（StorageService）
+- [x] 实现 MinIO 存储服务（MinioStorageService）
+- [x] 实现阿里云 OSS 存储服务（OssStorageService，@Primary）
 - [x] 实现文件类型验证工具
-- [ ] 未来：迁移到阿里云OSS（替换实现类即可）
+- [x] 迁移到阿里云 OSS（默认使用 OssStorageService；示例配置见 application-example.yml）
 
 #### 步骤3：媒体文件管理接口（部分完成）
-- [x] 文件上传接口（/api/media/upload）- 上传到MinIO，保存路径到数据库，支持可见权限控制；上传完成后状态为 `state=6`（待审核）
+- [x] 文件上传接口（/api/media/upload）- 上传到对象存储（当前为 OSS），保存路径到数据库，支持可见权限控制；上传完成后状态为 `state=6`（待审核）
 - [x] 媒体基础信息更新接口（PUT /api/media/{id}）- 仅更新 title/description（不改文件、不改封面、不改可见范围）；允许 `state=0/6/7` 更新；`state=7` 修改后自动重置为 `state=6` 需重新审核
-- [x] 视频封面更新接口（PUT /api/media/{id}/cover）- 独立操作：先上传MinIO，再更新DB；DB失败则补偿删除MinIO封面
+- [x] 视频封面更新接口（PUT /api/media/{id}/cover）- 独立操作：先上传对象存储，再更新 DB；DB 失败则补偿删除对象存储中的封面
 - [x] 媒体可见范围修复接口（PUT /api/media/{id}/visible）- 独立操作：仅更新 media_visible，方案C差量同步，事务保证原子性（visibleUserIds最多12个）
 - [x] 文件列表查询接口（/api/mediaVisible/list）- 支持按专区 `currentUserId` 筛选（0=公共区，成员ID=成员专区）；仅显示 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
 - [x] 我的上传列表接口（/api/mediaVisible/my/list）- 上传者本人管理自己的上传内容（直接查 media.uploader_id）；显示所有状态（排除 `state=5` 已删除），包括待审核和审核未通过状态
 - [x] 文件详情查询接口（/api/media/{id}）- 详情不依赖专区参数；仅显示 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
-- [x] 文件下载接口（/api/media/{id}/download）- 返回MinIO预签名URL（2小时有效）；仅允许下载 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
-- [x] 文件删除接口（/api/media/{id}/delete）- 仅上传者可删除；软删除：media.state→4，删 media_visible，删 MinIO，media.state→5
+- [x] 文件下载接口（/api/media/{id}/download）- 返回对象存储预签名 URL（当前为 OSS，2 小时有效）；仅允许下载 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
+- [x] 文件删除接口（/api/media/{id}/delete）- 仅上传者可删除；软删除：media.state→4，删 media_visible，删对象存储中的文件，media.state→5
 - [x] 媒体审核通过接口（POST /api/media/audit/approve）- 批量审核通过，将 `state=6`（待审核）改为 `state=0`（正常）；仅管理员或作者可操作；非事务性，返回失败项列表
 - [x] 媒体审核驳回接口（POST /api/media/audit/reject）- 批量审核驳回，将 `state=6`（待审核）改为 `state=7`（审核未通过）；仅管理员或作者可操作；非事务性，返回失败项列表
 - [x] 待审核媒体列表接口（GET /api/media/audit/pending）- 分页查询 `state=6`（待审核）的媒体列表；仅管理员或作者可访问
@@ -329,7 +331,7 @@ dragons-zone/
 ### 媒体文件相关接口
 
 #### POST /api/media/upload
-上传媒体文件到MinIO ✅
+上传媒体文件到对象存储（当前为阿里云 OSS）✅
 
 **请求头**: `Authorization: Bearer <JWT_TOKEN>`
 
@@ -381,7 +383,7 @@ dragons-zone/
 ```
 
 #### PUT /api/media/{id}/cover
-更新视频封面（独立操作：先MinIO后DB，DB失败补偿删MinIO）✅
+更新视频封面（独立操作：先上传对象存储再更新 DB，DB 失败则补偿删除对象存储中的封面）✅
 
 **请求头**: `Authorization: Bearer <JWT_TOKEN>`
 
@@ -474,7 +476,7 @@ dragons-zone/
 ```
 
 #### GET /api/media/{id}/download
-获取媒体文件下载URL（MinIO预签名URL，2小时有效）（**游客模式**：无需登录，无需请求头）✅
+获取媒体文件下载 URL（对象存储预签名 URL，当前为 OSS，2 小时有效）（**游客模式**：无需登录，无需请求头）✅
 
 **响应示例**:
 ```json
@@ -482,13 +484,13 @@ dragons-zone/
   "code": 200,
   "message": "获取成功",
   "data": {
-    "downloadUrl": "http://localhost:9000/dragons-media/images/2026/01/21/abc123.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
+    "downloadUrl": "https://dragons-media.oss-cn-beijing.aliyuncs.com/images/2026/01/21/abc123.jpg?Expires=...&OSSAccessKeyId=...&Signature=..."
   },
   "timestamp": 1705564800000
 }
 ```
 
-**注意**: 下载前会检查数据库记录和MinIO文件是否存在，防止缓存不一致问题
+**注意**: 下载前会检查数据库记录和对象存储中文件是否存在，防止缓存不一致问题
 
 #### DELETE /api/media/{id}/delete
 删除媒体文件（仅上传者本人可删除）✅
@@ -509,9 +511,9 @@ dragons-zone/
 1. 校验所有权（media.uploader_id 与当前用户一致）
 2. 将 media.state 置为 4（正在删除）并写库
 3. 删除 media_visible 记录（若本就不存在记录，视为幂等成功）
-4. 删除 MinIO 主文件与封面（若路径不同）
+4. 删除对象存储中的主文件与封面（若路径不同）
 5. 将 media.state 置为 5（已删除）并写库
-说明：若某次删除执行到一半失败导致 state=4，可再次调用删除接口继续清理 media_visible/MinIO 并将 state 置为 5（接口幂等收尾）。
+说明：若某次删除执行到一半失败导致 state=4，可再次调用删除接口继续清理 media_visible 与对象存储并将 state 置为 5（接口幂等收尾）。
 
 ### 树洞相关接口
 
@@ -571,8 +573,8 @@ dragons-zone/
 - JDK 17+
 - Maven 3.6+
 - MySQL 8.0+
-- IDE（推荐IntelliJ IDEA）
-- 阿里云OSS账号（需要AccessKey和Bucket配置）
+- IDE（推荐 IntelliJ IDEA）
+- 阿里云 OSS 账号（需 RAM AccessKey 与 Bucket；当前默认使用 OSS 存储媒体）
 
 ### 数据库配置
 修改 `dragons-core-server/src/main/resources/application.yml` 中的数据库连接信息：
@@ -584,17 +586,26 @@ spring:
     password: 123456
 ```
 
-### MinIO配置（MVP阶段）
-需要在 `application.yml` 中配置MinIO相关信息：
+### 对象存储配置
+当前默认使用**阿里云 OSS**，需在 `application.yml` 中配置 OSS：
+```yaml
+oss:
+  endpoint: oss-cn-beijing.aliyuncs.com
+  access-key-id: 你的阿里云 RAM AccessKeyId
+  access-key-secret: 你的阿里云 RAM AccessKeySecret
+  bucket: dragons-media
+```
+- `endpoint` 为地域节点，不要加 `https://` 前缀。
+- 示例与说明见 `application-example.yml`，便于克隆后配置或上传到 GitHub 时不含真实密钥。
+
+**MinIO（可选）**：若需使用 MinIO 本地开发，可保留以下配置；与 OSS 并存时，应用通过 `@Primary` 注入的是 `OssStorageService`。
 ```yaml
 minio:
   endpoint: http://localhost:9000
   access-key: root
   secret-key: 123456789
-  bucket: dragons-media
+  bucket: media
 ```
-
-**注意**: 未来迁移到阿里云OSS时，只需替换StorageService实现类，无需修改业务代码
 
 ### 运行项目
 ```bash
@@ -604,16 +615,16 @@ mvn spring-boot:run
 
 ## 注意事项
 
-1. **安全性**: 
-   - 密码必须加密存储，使用BCrypt算法
-   - JWT Token需要设置合理的过期时间
+1. **安全性**:
+   - 密码必须加密存储，使用 BCrypt 算法
+   - JWT Token 需要设置合理的过期时间
    - 文件上传需要验证文件类型
-   - OSS AccessKey需要妥善保管，不要提交到代码仓库
+   - OSS AccessKey（access-key-id / access-key-secret）需妥善保管，不要提交到代码仓库；可参考 `application-example.yml` 提供占位说明
 
 2. **文件存储**:
-   - 使用阿里云OSS存储实际文件
-   - MySQL仅存储OSS资源的URL地址
-   - 删除文件时需要同时删除OSS中的文件
+   - 当前默认使用阿里云 OSS 存储实际文件（路径存于 `storage_path` / `cover_path`）
+   - MySQL 仅存储对象路径，不存完整 URL
+   - 删除媒体时需要同时删除 OSS 中的对应对象
 
 3. **权限控制**:
    - 所有接口需要根据用户角色进行权限验证
@@ -663,6 +674,14 @@ mvn spring-boot:run
   - MinIO 删除失败不影响业务正确性
 - 📝 更新API设计文档（API_DESIGN.md）
 - 📝 更新开发记录（chatRecord.md）
+
+### 2026-02-15
+- ✅ 对象存储切换为阿里云 OSS
+  - 新增 `OssConfig`、`OssStorageService`（实现 `StorageService`，标注 `@Primary`）
+  - 在 `application.yml` 中新增 `oss.*` 配置（endpoint、access-key-id、access-key-secret、bucket）
+  - 在 `application-example.yml` 中新增 OSS 示例与说明，便于克隆/GitHub 使用
+  - 保留 MinIO 依赖与 `MinioStorageService`/`MinioConfig`，与 OSS 并存时优先使用 OSS
+  - 媒体上传/下载/删除等均通过 `StorageService` 抽象，业务代码无改动
 
 ### 2026-02-xx
 - ✅ 开发进度与代码对齐
