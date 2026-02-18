@@ -16,6 +16,7 @@ import com.dragons.core.service.ITreeHoleMessageService;
 import com.dragons.core.service.ITreeHoleService;
 import com.dragons.core.service.IUserService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,6 +34,7 @@ import java.util.stream.Collectors;
  * @author aice
  * @since 2026-01-17
  */
+@Slf4j
 @Service
 public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMapper, TreeHoleMessage> implements ITreeHoleMessageService {
 
@@ -58,9 +60,11 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     public Long sendMessage(Long ownerId, Long senderUserId, String content, Long rootMessageId) {
         // 参数校验
         if (ownerId == null || ownerId <= 0 || senderUserId == null || senderUserId <= 0) {
+            log.warn("sendMessage invalid params ownerId={} senderUserId={}", ownerId, senderUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         if (!StringUtils.hasText(content)) {
+            log.warn("sendMessage invalid params ownerId={} senderUserId={} reason=content_empty", ownerId, senderUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -68,17 +72,21 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         TreeHole treeHole = treeHoleService.getOne(
                 new LambdaQueryWrapper<TreeHole>().eq(TreeHole::getOwnerId, ownerId));
         if (treeHole == null) {
+            log.warn("sendMessage denied ownerId={} senderUserId={} reason=treehole_not_found", ownerId, senderUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
         // rootMessageId为空，说明是用户投递新的树洞留言
         if (rootMessageId == null) {
-            return doDeliverNewMessage(treeHole, senderUserId, content);
+            Long messageId = doDeliverNewMessage(treeHole, senderUserId, content);
+            log.info("treehole message delivered ownerId={} messageId={} senderId={}", ownerId, messageId, senderUserId);
+            return messageId;
         }
 
         // rootMessageId不为空，则是树洞主人回复（仅支持一次回复）
         // 先确定回复者是树洞主人
         if (!senderUserId.equals(ownerId)) {
+            log.warn("sendMessage reply denied ownerId={} senderUserId={} rootMessageId={} reason=not_owner", ownerId, senderUserId, rootMessageId);
             throw new BusinessException(ResponseCode.FORBIDDEN);
         }
         // 根据rootMessageId获取被回复的树洞留言
@@ -88,17 +96,22 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                         .eq(TreeHoleMessage::getTreeHoleOwnerId, ownerId));
         // 确认被回复留言存在，且没有被删除
         if (rootMessage == null) {
+            log.warn("sendMessage reply denied ownerId={} rootMessageId={} reason=root_message_not_found", ownerId, rootMessageId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
         // 确认被回复留言的状态，若已被树洞所有者删除，则无法回复
         if (rootMessage.getState() != null && rootMessage.getState() == STATE_DELETED) {
+            log.warn("sendMessage reply denied ownerId={} rootMessageId={} reason=root_message_deleted", ownerId, rootMessageId);
             throw new BusinessException(ResponseCode.TREE_HOLE_MESSAGE_DELETED);
         }
         // 若该留言已有其他回复，也无法回复（树洞不是讨论区，仅支持一次回复）
         if (rootMessage.getReplyMessageId() != null) {
+            log.warn("sendMessage reply denied ownerId={} rootMessageId={} reason=reply_already_exists", ownerId, rootMessageId);
             throw new BusinessException(ResponseCode.TREE_HOLE_REPLY_ALREADY_EXISTS);
         }
-        return doReplyMessage(treeHole, rootMessage, ownerId, content);
+        Long messageId = doReplyMessage(treeHole, rootMessage, ownerId, content);
+        log.info("treehole reply sent ownerId={} messageId={} senderId={}", ownerId, messageId, senderUserId);
+        return messageId;
     }
 
     /**
@@ -110,10 +123,12 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
             // 1) 对树洞行加锁，同一树洞的投递需要排队执行，保证 count+insert 原子性
             TreeHole locked = treeHoleService.getByOwnerIdForUpdate(ownerId);
             if (locked == null) {
+                log.error("doDeliverNewMessage failed ownerId={} senderUserId={} reason=treehole_lock_failed", ownerId, senderUserId);
                 throw new BusinessException(ResponseCode.NOT_FOUND);
             }
             // 2) 确认树洞状态
             if (locked.getState() != null && locked.getState() == TREE_HOLE_STATE_FORBIDDEN) {
+                log.warn("doDeliverNewMessage denied ownerId={} senderUserId={} reason=treehole_closed", ownerId, senderUserId);
                 throw new BusinessException(ResponseCode.TREE_HOLE_CLOSED);
             }
             // 3) 黑名单校验
@@ -123,6 +138,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                             .eq(TreeHoleBlacklist::getBlockedUserId, senderUserId)
                             .eq(TreeHoleBlacklist::getState, BLACKLIST_STATE_ACTIVE));
             if (blackCount > 0) {
+                log.warn("doDeliverNewMessage denied ownerId={} senderUserId={} reason=sender_blocked", ownerId, senderUserId);
                 throw new BusinessException(ResponseCode.TREE_HOLE_SENDER_BLOCKED);
             }
             // 4) 防刷：同一发送者在该树洞下最多一条未读
@@ -132,6 +148,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                             .eq(TreeHoleMessage::getSenderId, senderUserId)
                             .eq(TreeHoleMessage::getState, STATE_UNREAD));
             if (unreadFromSender > 0) {
+                log.warn("doDeliverNewMessage denied ownerId={} senderUserId={} reason=unread_exists", ownerId, senderUserId);
                 throw new BusinessException(ResponseCode.TREE_HOLE_UNREAD_EXISTS);
             }
             // 5) 插入新留言
@@ -145,6 +162,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
             message.setUpdateTime(LocalDateTime.now());
             boolean saved = this.save(message);
             if (!saved) {
+                log.error("doDeliverNewMessage failed ownerId={} senderUserId={} reason=db_insert_failed", ownerId, senderUserId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
             return message.getId();
@@ -171,6 +189,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
             reply.setUpdateTime(LocalDateTime.now());
             boolean replySaved = this.save(reply);
             if (!replySaved) {
+                log.error("doReplyMessage failed ownerId={} rootMessageId={} reason=reply_insert_failed", ownerId, rootMessageId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
             rootMessage.setReplyMessageId(reply.getId());
@@ -183,6 +202,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
             }
             boolean rootUpdated = this.updateById(rootMessage);
             if (!rootUpdated) {
+                log.error("doReplyMessage failed ownerId={} rootMessageId={} replyId={} reason=root_update_failed", ownerId, rootMessageId, reply.getId());
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
             return reply.getId();
@@ -193,6 +213,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     public TreeHoleMessagePageResult listMessages(Long ownerId, Long viewerUserId, Integer page, Integer size) {
         // 参数校验
         if (ownerId == null || ownerId <= 0 || viewerUserId == null) {
+            log.warn("listMessages invalid params ownerId={} viewerUserId={}", ownerId, viewerUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         // 若未传入分页信息，采用默认值
@@ -225,6 +246,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                             m.getId(), m.getSenderId(), senderNickName, m.getContent(), m.getState(), m.getRootMessageId());
                 })
                 .collect(Collectors.toList());
+        log.info("listMessages ownerId={} viewerUserId={} page={} size={} total={}", ownerId, viewerUserId, pageNum, pageSize, result.getTotal());
         return new TreeHoleMessagePageResult(result.getTotal(), list);
     }
 
@@ -232,18 +254,21 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     public void markMessageRead(Long messageId, Long ownerUserId) {
         // 标记已读就是将tree_hole_message的状态改为1
         updateOwnerMessageState(messageId, ownerUserId, STATE_READ);
+        log.info("markMessageRead success messageId={} ownerUserId={}", messageId, ownerUserId);
     }
 
     @Override
     public void deleteMessageByOwner(Long messageId, Long ownerUserId) {
         // 将该留言及以其为根消息的回复一并置为 state=2（已删除）
         updateOwnerMessageState(messageId, ownerUserId, STATE_DELETED);
+        log.info("deleteMessageByOwner success messageId={} ownerUserId={}", messageId, ownerUserId);
     }
 
     @Override
     public void deleteMessageBySender(Long messageId, Long senderUserId) {
         // 参数校验
         if (messageId == null || messageId <= 0 || senderUserId == null) {
+            log.warn("deleteMessageBySender invalid params messageId={} senderUserId={}", messageId, senderUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         // 仅允许消息发送者删除自己创建的留言
@@ -254,16 +279,19 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         );
 
         if (treeHoleMessage == null) {
+            log.warn("deleteMessageBySender denied messageId={} senderUserId={} reason=message_not_found_or_not_owner", messageId, senderUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
         // 全局已删除：视为幂等成功
         Byte state = treeHoleMessage.getState();
         if (state != null && state == 2) {
+            log.info("deleteMessageBySender idempotent messageId={} senderUserId={} reason=already_deleted", messageId, senderUserId);
             return;
         }
         // 重复删除不报错
         Byte senderDeleted = treeHoleMessage.getSenderDeleted();
         if (senderDeleted != null && senderDeleted == 1) {
+            log.info("deleteMessageBySender idempotent messageId={} senderUserId={} reason=already_sender_deleted", messageId, senderUserId);
             return;
         }
         LocalDateTime now = LocalDateTime.now();
@@ -281,18 +309,22 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                 treeHoleMessage.setUpdateTime(now);
                 boolean rootUpdated = this.updateById(treeHoleMessage);
                 if (!rootUpdated) {
+                    log.error("deleteMessageBySender failed messageId={} senderUserId={} reason=root_update_failed_with_replies", messageId, senderUserId);
                     throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
                 }
                 return null;
             });
+            log.info("deleteMessageBySender success messageId={} senderUserId={} hasReplies=true", messageId, senderUserId);
         } else {
             // 无回复：仅更新根留言
             treeHoleMessage.setSenderDeleted((byte) 1);
             treeHoleMessage.setUpdateTime(now);
             boolean updated = updateByIdWithRetry(treeHoleMessage);
             if (!updated) {
+                log.error("deleteMessageBySender failed messageId={} senderUserId={} reason=db_update_failed", messageId, senderUserId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
+            log.info("deleteMessageBySender success messageId={} senderUserId={} hasReplies=false", messageId, senderUserId);
         }
     }
 
@@ -304,6 +336,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
      */
     private void updateOwnerMessageState(Long messageId, Long ownerUserId, byte targetState) {
         if (messageId == null || messageId <= 0 || ownerUserId == null) {
+            log.warn("updateOwnerMessageState invalid params messageId={} ownerUserId={} targetState={}", messageId, ownerUserId, targetState);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -313,6 +346,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                         .eq(TreeHoleMessage::getTreeHoleOwnerId, ownerUserId)
         );
         if (treeHoleMessage == null) {
+            log.warn("updateOwnerMessageState denied messageId={} ownerUserId={} targetState={} reason=message_not_found_or_not_owner", messageId, ownerUserId, targetState);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -321,15 +355,18 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         if (targetState == STATE_READ) {
             // 重复标记已读不报错
             if (currentState != null && currentState == STATE_READ) {
+                log.info("updateOwnerMessageState idempotent messageId={} ownerUserId={} targetState=READ reason=already_read", messageId, ownerUserId);
                 return;
             }
             // 已删除的留言不允许再标记已读
             if (currentState != null && currentState == STATE_DELETED) {
+                log.warn("updateOwnerMessageState denied messageId={} ownerUserId={} targetState=READ reason=already_deleted", messageId, ownerUserId);
                 throw new BusinessException(ResponseCode.BAD_REQUEST);
             }
         } else if (targetState == STATE_DELETED) {
             // 重复删除不报错
             if (currentState != null && currentState == STATE_DELETED) {
+                log.info("updateOwnerMessageState idempotent messageId={} ownerUserId={} targetState=DELETED reason=already_deleted", messageId, ownerUserId);
                 return;
             }
             LocalDateTime now = LocalDateTime.now();
@@ -347,6 +384,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                     treeHoleMessage.setUpdateTime(now);
                     boolean rootUpdated = this.updateById(treeHoleMessage);
                     if (!rootUpdated) {
+                        log.error("updateOwnerMessageState delete failed messageId={} ownerUserId={} reason=root_update_failed_with_replies replyCount={}", messageId, ownerUserId, replyCount);
                         throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
                     }
                     return null;
@@ -357,11 +395,13 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                 treeHoleMessage.setUpdateTime(now);
                 boolean updated = updateByIdWithRetry(treeHoleMessage);
                 if (!updated) {
+                    log.error("updateOwnerMessageState delete failed messageId={} ownerUserId={} reason=db_update_failed", messageId, ownerUserId);
                     throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
                 }
             }
             return;
         } else {
+            log.warn("updateOwnerMessageState invalid targetState messageId={} ownerUserId={} targetState={}", messageId, ownerUserId, targetState);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -370,6 +410,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         treeHoleMessage.setUpdateTime(LocalDateTime.now());
         boolean updated = updateByIdWithRetry(treeHoleMessage);
         if (!updated) {
+            log.error("updateOwnerMessageState read failed messageId={} ownerUserId={} reason=db_update_failed", messageId, ownerUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
     }

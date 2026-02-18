@@ -10,6 +10,7 @@ import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.IMediaVisibleService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dragons.core.storage.StorageService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +25,7 @@ import java.util.List;
  * @author aice
  * @since 2026-01-17
  */
+@Slf4j
 @Service
 public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, MediaVisible> implements IMediaVisibleService {
 
@@ -48,6 +50,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         long safeZoneUserId = (zoneUserId == null) ? 0L : zoneUserId;
 
         if (category != null && category != 0 && category != 1) {
+            log.warn("listMedia invalid category category={} zoneUserId={}", category, zoneUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -95,15 +98,17 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                         coverPath,
                         m.getUpdateTime(),
                         coverUrl
-                ));
+                )                );
             }
         }
+        log.info("listMedia zoneUserId={} page={} size={} category={} total={}", safeZoneUserId, safePage, safeSize, category, total);
         return new MediaPageResult(total, list);
     }
 
     @Override
     public MyUploadPageResult listMyUpload(Integer page, Integer size, Byte category, Long uploaderUserId) {
         if (uploaderUserId == null) {
+            log.warn("listMyUpload denied reason=uploaderUserId_null");
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
 
@@ -114,6 +119,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
 
         if (category != null && category != 0 && category != 1) {
+            log.warn("listMyUpload invalid category category={} uploaderUserId={}", category, uploaderUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -157,6 +163,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             }
         }
 
+        log.info("listMyUpload uploaderUserId={} page={} size={} category={} total={}", uploaderUserId, safePage, safeSize, category, total);
         return new MyUploadPageResult(total, list);
     }
 
@@ -173,7 +180,8 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             }
             // 2 小时有效期，前端列表用足够
             return storageService.getPresignedUrl(coverPath, 7200);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("buildCoverPresignedUrl error coverPath={}", coverPath, e);
             return null;
         }
     }
@@ -185,6 +193,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
     @Override
     public List<Long> getVisibleUserIdsByMediaId(Long mediaId) {
         if (mediaId == null) {
+            log.info("getVisibleUserIdsByMediaId mediaId=null returning empty");
             return new ArrayList<>();
         }
         LambdaQueryWrapper<MediaVisible> wrapper = new LambdaQueryWrapper<>();
@@ -198,6 +207,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 }
             }
         }
+        log.info("getVisibleUserIdsByMediaId mediaId={} zoneCount={}", mediaId, userIds.size());
         return userIds;
     }
 }

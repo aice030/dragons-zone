@@ -13,6 +13,7 @@ import com.dragons.core.service.IUserService;
 import com.dragons.core.storage.StorageService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +42,7 @@ import java.util.stream.Collectors;
  * @author aice
  * @since 2026-01-17
  */
+@Slf4j
 @Service
 public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements IMediaService {
 
@@ -70,7 +72,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         validateUploadParams(category, title, description, uploaderUserId);
-
         // 1) 通过扩展名验证文件类型
         validateFileExtension(file, category);
 
@@ -81,7 +82,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         } catch (Exception e) {
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
-
         // 3) 计算文件哈希值（用于幂等性检查）
         String fileHash = calculateFileHash(fileBytes);
 
@@ -94,6 +94,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 如果已存在相同文件，直接返回已有记录（幂等）
         // 排除正在删除（state=4）和已删除（state=5）的记录
         if (existingMedia != null && existingMedia.getState() != 4 && existingMedia.getState() != 5) {
+            log.info("upload: duplicate content, returning existing media userId={} mediaId={}", uploaderUserId, existingMedia.getId());
             // 返回已有记录的ID和路径
             return new UploadResult(
                     existingMedia.getId(),
@@ -123,6 +124,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
         boolean saved = saveWithRetry(media);
         if (!saved) {
+            log.error("upload: media insert failed");
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
 
@@ -142,22 +144,17 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 重试3次
         boolean updated = updateStateWithRetry(media, 3);
         if (!updated) {
-            // 更新状态失败，清理已上传的文件和数据库记录
+            log.error("upload state update failed, rolling back mediaId={} objectName={}", media.getId(), objectName);
             try {
-                // 删除对象存储中的文件
                 storageService.delete(objectName);
             } catch (Exception e) {
-                // 删除失败，记录日志（不影响主流程）
-                // TODO: 记录日志
+                log.warn("rollback storage delete failed mediaId={} objectName={}", media.getId(), objectName, e);
             }
-            // 删除数据库中的 media 记录
             try {
                 this.removeById(media.getId());
             } catch (Exception e) {
-                // 删除失败，记录日志（不影响主流程）
-                // TODO: 记录日志
+                log.warn("rollback media remove failed mediaId={}", media.getId(), e);
             }
-            // 返回上传失败
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
 
@@ -169,14 +166,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             media.setUpdateTime(LocalDateTime.now());
             updateWithRetry(media);
         } else {
-            // 保存失败，state 保持 2（上传成功但不可见）
-            // 文件已经上传成功，不回滚，可以后续重试或手动修复
-            // TODO: 记录日志或提供重试机制
+            log.warn("media_visible save failed mediaId={}, state remains 2", media.getId());
         }
 
         // 12) 上传封面文件到对象存储（如果用户提供了封面）
         uploadCoverToStorageIfPresent(cover, coverPath);
 
+        log.info("upload success mediaId={} category={} uploaderId={}", media.getId(), category, uploaderUserId);
         return new UploadResult(media.getId(), objectName, category, visibleUserIds);
     }
 
@@ -199,7 +195,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // - 审核者（作者/管理员）：允许 state=0/6/7（用于审核预览）
         byte state = media.getState();
         if (state == 4 || state == 5) {
-            // 正在删除/已删除
+            log.warn("getDownloadUrl denied mediaId={} currentUserId={} reason=deleted_or_deleting", mediaId, currentUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
         if (state != 0) {
@@ -215,13 +211,14 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 }
             }
             if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
+                log.warn("getDownloadUrl denied mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
                 throw new BusinessException(ResponseCode.NOT_FOUND);
             }
         }
 
         // 2. 检查对象存储中文件是否实际存在（防止缓存不一致导致的问题）
         if (!storageService.exists(media.getStoragePath())) {
-            // 对象存储中文件不存在，返回404
+            log.warn("getDownloadUrl denied mediaId={} reason=storage_file_not_exists path={}", mediaId, media.getStoragePath());
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -259,6 +256,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
         if (!isOwner && !isAuthorOrAdmin) {
+            log.warn("delete denied mediaId={} userId={} reason=not_owner_nor_admin", mediaId, currentUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -278,7 +276,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             media.setUpdateTime(LocalDateTime.now());
             boolean stateUpdated = updateStateWithRetry(media, 3);
             if (!stateUpdated) {
-                // 更新状态失败，返回删除失败
+                log.error("delete failed mediaId={} reason=state_update_to_4_failed", mediaId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
         }
@@ -286,7 +284,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 第二步：删除所有 media_visible 数据，重试3次
         boolean visibleDeleted = deleteMediaVisibleWithRetry(mediaId, 3);
         if (!visibleDeleted) {
-            // 删除失败，回滚 media 的 state 状态
+            log.error("delete failed mediaId={} reason=media_visible_delete_failed rolling_back_state", mediaId);
             media.setState(originalState);
             updateWithRetry(media);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
@@ -298,8 +296,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             try {
                 storageService.delete(storagePath);
             } catch (Exception e) {
-                // 删除失败，记录日志（不影响主流程）
-                // TODO: 记录日志
+                log.warn("storage delete failed mediaId={} path={}", mediaId, storagePath, e);
             }
         }
         // 删除封面文件（与主文件路径不同则从对象存储删除）
@@ -307,14 +304,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             try {
                 storageService.delete(coverPath);
             } catch (Exception e) {
-                // 删除失败，记录日志（不影响主流程）
-                // TODO: 记录日志
+                log.warn("storage delete cover failed mediaId={} path={}", mediaId, coverPath, e);
             }
         }
 
         // 第四步：物理删除 media 记录
-        // 这里失败了也没事，因为状态已经state=4，不影响其他用户查看，后续重新删一次就好了
         this.removeById(mediaId);
+        log.info("delete success mediaId={} userId={}", mediaId, currentUserId);
     }
 
     @Override
@@ -347,6 +343,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 }
             }
             if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
+                log.warn("getMediaDetail denied mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
                 throw new BusinessException(ResponseCode.NOT_FOUND);
             }
         }
@@ -421,9 +418,10 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
 
         if (!updateWithRetry(media)) {
+            log.error("update failed mediaId={} reason=db_update_failed", mediaId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
-
+        log.info("media update success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), null);
     }
 
@@ -477,6 +475,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         media.setState((byte) 6);
         boolean updated = updateWithRetry(media);
         if (!updated) {
+            log.error("updateCover failed mediaId={} reason=db_update_failed compensating_cover_delete", mediaId);
             try {
                 storageService.delete(coverPath);
             } catch (Exception ignored) {
@@ -493,7 +492,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         } catch (Exception ignored) {
             // ignore
         }
-
+        log.info("media cover update success mediaId={}", mediaId);
         return new CoverUpdateResult(mediaId, coverPath, coverUrl);
     }
 
@@ -545,6 +544,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 );
             }
         } catch (Exception e) {
+            log.error("rebuildVisible failed mediaId={} reason=remove_visible_failed", mediaId, e);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
 
@@ -559,6 +559,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             } catch (BusinessException be) {
                 throw be;
             } catch (Exception e) {
+                log.error("rebuildVisible failed mediaId={} zoneId={} reason=add_visible_failed", mediaId, zoneId, e);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
         }
@@ -568,13 +569,15 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 调用本接口修复可见范围成功后，将状态修正为 state=0（正常可查看）。
         // 其余状态下，本接口仅维护 media_visible，不影响媒体审核状态（state）。
         if (media.getState() != null && media.getState() == 2) {
+            log.info("rebuildVisible: correcting media state from 2 to 0 mediaId={}", mediaId);
             media.setState((byte) 0);
             media.setUpdateTime(LocalDateTime.now());
             if (!updateWithRetry(media)) {
+                log.error("rebuildVisible failed mediaId={} reason=state_correct_2_to_0_failed", mediaId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
         }
-
+        log.info("media visible rebuild success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);
     }
 
@@ -619,6 +622,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 }
             } catch (Exception e) {
                 // 继续重试
+                log.warn("update media state failed, retry #{}, error={}", i, e.getMessage());
             }
         }
         return false;
@@ -932,7 +936,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
             }
         }
-
+        int successCount = mediaIds.size() - failedItems.size();
+        log.info("approveMedia auditorUserId={} total={} success={} failed={}", auditorUserId, mediaIds.size(), successCount, failedItems.size());
         return new MediaAuditResult(failedItems);
     }
 
@@ -980,7 +985,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
             }
         }
-
+        int successCount = mediaIds.size() - failedItems.size();
+        log.info("rejectMedia auditorUserId={} total={} success={} failed={}", auditorUserId, mediaIds.size(), successCount, failedItems.size());
         return new MediaAuditResult(failedItems);
     }
 
@@ -1007,6 +1013,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             countWrapper.eq(Media::getCategory, category);
         }
         long total = this.count(countWrapper);
+        log.info("listPendingMedia auditorUserId={} page={} size={} category={} total={}", auditorUserId, safePage, safeSize, category, total);
 
         LambdaQueryWrapper<Media> listWrapper = new LambdaQueryWrapper<>();
         listWrapper.eq(Media::getState, (byte) 6);

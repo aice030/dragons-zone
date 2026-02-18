@@ -13,6 +13,7 @@ import com.dragons.core.service.IUserService;
 import com.dragons.core.util.JwtUtil;
 import com.dragons.core.util.PasswordUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -30,6 +31,7 @@ import java.util.regex.Pattern;
  * @author aice
  * @since 2026-01-17
  */
+@Slf4j
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IUserService {
 
@@ -63,19 +65,23 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         // 2. 验证用户是否存在
         if (user == null) {
+            log.warn("login failed loginName={} reason=user_not_found", request.getLoginName());
             throw new BusinessException(ResponseCode.LOGIN_FAILED);
         }
 
         // 3. 验证用户状态
         if (user.getState() == 1) {
+            log.warn("login denied userId={} loginName={} reason=user_deleted", user.getId(), request.getLoginName());
             throw new BusinessException(ResponseCode.USER_DELETED);
         }
         if (user.getState() == 2) {
+            log.warn("login denied userId={} loginName={} reason=user_blacklisted", user.getId(), request.getLoginName());
             throw new BusinessException(ResponseCode.USER_BLACKLISTED);
         }
 
         // 4. 验证密码
         if (!passwordUtil.matches(request.getPassword(), user.getPassword())) {
+            log.warn("login failed userId={} loginName={} reason=password_mismatch", user.getId(), request.getLoginName());
             throw new BusinessException(ResponseCode.LOGIN_FAILED);
         }
 
@@ -89,7 +95,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 user.getNickName(),
                 user.getLevel()
         );
-
+        log.info("login success userId={} loginName={}", user.getId(), user.getLoginName());
         return new LoginResult(token, userInfo);
     }
 
@@ -97,6 +103,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public RegisterResult register(RegisterRequest request) {
         // 1. 验证手机号格式
         if (!PHONE_PATTERN.matcher(request.getPhoneNumber()).matches()) {
+            log.warn("register failed loginName={} reason=phone_format_invalid", request.getLoginName());
             throw new BusinessException(ResponseCode.PHONE_FORMAT_INVALID);
         }
 
@@ -104,6 +111,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         LambdaQueryWrapper<User> loginNameWrapper = new LambdaQueryWrapper<>();
         loginNameWrapper.eq(User::getLoginName, request.getLoginName());
         if (this.count(loginNameWrapper) > 0) {
+            log.warn("register failed loginName={} reason=username_exists", request.getLoginName());
             throw new BusinessException(ResponseCode.USERNAME_EXISTS);
         }
 
@@ -111,6 +119,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         LambdaQueryWrapper<User> phoneWrapper = new LambdaQueryWrapper<>();
         phoneWrapper.eq(User::getPhoneNumber, request.getPhoneNumber());
         if (this.count(phoneWrapper) > 0) {
+            log.warn("register failed loginName={} reason=phone_exists", request.getLoginName());
             throw new BusinessException(ResponseCode.PHONE_EXISTS);
         }
 
@@ -131,9 +140,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         // 6. 保存用户（重试 3 次）
         if (!saveWithRetry(user)) {
+            log.error("register failed loginName={} reason=db_insert_failed", request.getLoginName());
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
-
+        log.info("register success userId={} loginName={}", user.getId(), user.getLoginName());
         return new RegisterResult(user.getId(), user.getLoginName());
     }
 
@@ -142,16 +152,19 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 1. 查询用户
         User user = this.getById(userId);
         if (user == null) {
+            log.warn("deregister denied userId={} reason=user_not_found", userId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
         // 2. 检查用户状态（如果已被注销，不允许重复注销）
         if (user.getState() == 1) {
+            log.warn("deregister denied userId={} reason=already_deleted", userId);
             throw new BusinessException(ResponseCode.USER_DELETED);
         }
 
         // 3. 验证密码（二次确认）
         if (!passwordUtil.matches(password, user.getPassword())) {
+            log.warn("deregister denied userId={} reason=password_mismatch", userId);
             throw new BusinessException(ResponseCode.LOGIN_FAILED);
         }
 
@@ -161,13 +174,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         user.setPhoneNumber("deleted_" + user.getId());
         user.setUpdateTime(LocalDateTime.now());
         if (!updateByIdWithRetry(user)) {
+            log.error("deregister failed userId={} reason=db_update_failed", userId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("deregister success userId={}", userId);
     }
 
     @Override
     public void resetPasswordByPhone(Long currentUserId, String phoneNumber, String newPassword) {
         if (currentUserId == null) {
+            log.warn("resetPasswordByPhone denied reason=currentUserId_null");
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
 
@@ -177,23 +193,28 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // }
         // 2) 校验新密码（MVP：基础校验即可）
         if (newPassword == null || newPassword.trim().isEmpty()) {
+            log.warn("resetPasswordByPhone invalid params userId={} reason=password_empty", currentUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         if (newPassword.length() < 6 || newPassword.length() > 64) {
+            log.warn("resetPasswordByPhone invalid params userId={} reason=password_length_invalid", currentUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
         // 3) 查询当前登录用户
         User user = this.getById(currentUserId);
         if (user == null) {
+            log.warn("resetPasswordByPhone denied userId={} reason=user_not_found", currentUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
         // 4) 校验用户状态
         if (user.getState() == 1) {
+            log.warn("resetPasswordByPhone denied userId={} reason=user_deleted", currentUserId);
             throw new BusinessException(ResponseCode.USER_DELETED);
         }
         if (user.getState() == 2) {
+            log.warn("resetPasswordByPhone denied userId={} reason=user_blacklisted", currentUserId);
             throw new BusinessException(ResponseCode.USER_BLACKLISTED);
         }
 
@@ -201,6 +222,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String inputPhone = (phoneNumber == null) ? null : phoneNumber.trim();
         String dbPhone = user.getPhoneNumber();
         if (inputPhone == null || inputPhone.isEmpty() || dbPhone == null || !dbPhone.equals(inputPhone)) {
+            log.warn("resetPasswordByPhone denied userId={} reason=phone_mismatch", currentUserId);
             throw new BusinessException(ResponseCode.FORBIDDEN);
         }
 
@@ -209,14 +231,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         user.setPassword(encodedPassword);
         user.setUpdateTime(LocalDateTime.now());
         if (!updateByIdWithRetry(user)) {
+            log.error("resetPasswordByPhone failed userId={} reason=db_update_failed", currentUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("resetPasswordByPhone success userId={}", currentUserId);
     }
 
     @Override
     public void forgotPassword(String loginName, String phoneNumber, String newPassword) {
         // 1) 参数校验
         if (!StringUtils.hasText(loginName) || !StringUtils.hasText(phoneNumber)) {
+            log.warn("forgotPassword invalid params loginName={} reason=empty_params", loginName);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         // 只要注册成功，默认手机号合规，此处不再校验，以兼容手动入库的测试用户
@@ -224,9 +249,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         //     throw new BusinessException(ResponseCode.PHONE_FORMAT_INVALID);
         // }
         if (newPassword == null || newPassword.trim().isEmpty()) {
+            log.warn("forgotPassword invalid params loginName={} reason=password_empty", loginName);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         if (newPassword.length() < 6 || newPassword.length() > 64) {
+            log.warn("forgotPassword invalid params loginName={} reason=password_length_invalid", loginName);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -235,19 +262,23 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         wrapper.eq(User::getLoginName, loginName.trim());
         User user = this.getOne(wrapper);
         if (user == null) {
+            log.warn("forgotPassword denied loginName={} reason=login_name_phone_mismatch", loginName);
             throw new BusinessException(ResponseCode.LOGIN_NAME_PHONE_MISMATCH);
         }
         String inputPhone = phoneNumber.trim();
         String dbPhone = user.getPhoneNumber();
         if (dbPhone == null || !dbPhone.equals(inputPhone)) {
+            log.warn("forgotPassword denied loginName={} userId={} reason=login_name_phone_mismatch", loginName, user.getId());
             throw new BusinessException(ResponseCode.LOGIN_NAME_PHONE_MISMATCH);
         }
 
         // 3) 校验用户状态
         if (user.getState() != null && user.getState() == 1) {
+            log.warn("forgotPassword denied loginName={} userId={} reason=user_deleted", loginName, user.getId());
             throw new BusinessException(ResponseCode.USER_DELETED);
         }
         if (user.getState() != null && user.getState() == 2) {
+            log.warn("forgotPassword denied loginName={} userId={} reason=user_blacklisted", loginName, user.getId());
             throw new BusinessException(ResponseCode.USER_BLACKLISTED);
         }
 
@@ -256,8 +287,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         user.setPassword(encodedPassword);
         user.setUpdateTime(LocalDateTime.now());
         if (!updateByIdWithRetry(user)) {
+            log.error("forgotPassword failed loginName={} userId={} reason=db_update_failed", loginName, user.getId());
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("forgotPassword success loginName={}", loginName.trim());
     }
 
     /** 写操作重试：最多 3 次，防止临时网络/锁冲突导致失败 */
@@ -267,7 +300,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 if (this.save(user)) {
                     return true;
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                if (i == WRITE_MAX_RETRIES - 1) {
+                    log.error("saveWithRetry failed after {} retries userId={} loginName={}", WRITE_MAX_RETRIES, user.getId(), user.getLoginName(), e);
+                }
             }
         }
         return false;
@@ -279,7 +315,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 if (this.updateById(user)) {
                     return true;
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                if (i == WRITE_MAX_RETRIES - 1) {
+                    log.error("updateByIdWithRetry failed after {} retries userId={}", WRITE_MAX_RETRIES, user.getId(), e);
+                }
             }
         }
         return false;
@@ -290,14 +329,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
      */
     private void validateAuthorOrAdmin(Long userId) {
         if (userId == null) {
+            log.warn("validateAuthorOrAdmin denied userId=null");
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
         User user = this.getById(userId);
         if (user == null || user.getState() == null || user.getState() != 0) {
+            log.warn("validateAuthorOrAdmin denied userId={} reason=user_not_found_or_invalid_state", userId);
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
         Byte level = user.getLevel();
         if (level == null || (level != 0 && level != 1)) {
+            log.warn("validateAuthorOrAdmin denied userId={} level={} reason=not_author_nor_admin", userId, level);
             throw new BusinessException(ResponseCode.FORBIDDEN);
         }
     }
@@ -305,9 +347,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     @Override
     public void updateUserLevel(Long currentUserId, Long targetUserId, Byte newLevel) {
         if (currentUserId == null || targetUserId == null) {
+            log.warn("updateUserLevel invalid params currentUserId={} targetUserId={}", currentUserId, targetUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         if (newLevel == null || (newLevel != 0 && newLevel != 1 && newLevel != 2 && newLevel != 3)) {
+            log.warn("updateUserLevel invalid level currentUserId={} targetUserId={} newLevel={}", currentUserId, targetUserId, newLevel);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -317,6 +361,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 查询目标用户
         User targetUser = this.getById(targetUserId);
         if (targetUser == null) {
+            log.warn("updateUserLevel denied currentUserId={} targetUserId={} reason=target_user_not_found", currentUserId, targetUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -324,16 +369,20 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         targetUser.setLevel(newLevel);
         targetUser.setUpdateTime(LocalDateTime.now());
         if (!updateByIdWithRetry(targetUser)) {
+            log.error("updateUserLevel failed currentUserId={} targetUserId={} newLevel={} reason=db_update_failed", currentUserId, targetUserId, newLevel);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("updateUserLevel success currentUserId={} targetUserId={} newLevel={}", currentUserId, targetUserId, newLevel);
     }
 
     @Override
     public void updateUserState(Long currentUserId, Long targetUserId, Byte newState) {
         if (currentUserId == null || targetUserId == null) {
+            log.warn("updateUserState invalid params currentUserId={} targetUserId={}", currentUserId, targetUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         if (newState == null || (newState != 0 && newState != 1 && newState != 2)) {
+            log.warn("updateUserState invalid state currentUserId={} targetUserId={} newState={}", currentUserId, targetUserId, newState);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -343,6 +392,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 查询目标用户
         User targetUser = this.getById(targetUserId);
         if (targetUser == null) {
+            log.warn("updateUserState denied currentUserId={} targetUserId={} reason=target_user_not_found", currentUserId, targetUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -350,8 +400,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         targetUser.setState(newState);
         targetUser.setUpdateTime(LocalDateTime.now());
         if (!updateByIdWithRetry(targetUser)) {
+            log.error("updateUserState failed currentUserId={} targetUserId={} newState={} reason=db_update_failed", currentUserId, targetUserId, newState);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("updateUserState success currentUserId={} targetUserId={} newState={}", currentUserId, targetUserId, newState);
     }
 
     /**
@@ -359,14 +411,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
      */
     private void validateAuthor(Long userId) {
         if (userId == null) {
+            log.warn("validateAuthor denied userId=null");
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
         User user = this.getById(userId);
         if (user == null || user.getState() == null || user.getState() != 0) {
+            log.warn("validateAuthor denied userId={} reason=user_not_found_or_invalid_state", userId);
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
         Byte level = user.getLevel();
         if (level == null || level != 0) {
+            log.warn("validateAuthor denied userId={} level={} reason=not_author", userId, level);
             throw new BusinessException(ResponseCode.FORBIDDEN);
         }
     }
@@ -374,6 +429,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     @Override
     public IUserService.UserListResult getUserList(Long currentUserId, Integer page, Integer size) {
         if (currentUserId == null) {
+            log.warn("getUserList denied reason=currentUserId_null");
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
         if (page == null || page < 1) {
@@ -408,6 +464,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             ));
         }
 
+        log.info("getUserList currentUserId={} page={} size={} total={}", currentUserId, page, size, pageResult.getTotal());
         return new IUserService.UserListResult(pageResult.getTotal(), list);
     }
 

@@ -6,6 +6,7 @@ import com.aliyun.oss.model.ObjectMetadata;
 import com.aliyun.oss.model.PutObjectRequest;
 import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.exception.BusinessException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
@@ -22,6 +23,7 @@ import java.util.Date;
  * @author aice
  * @since 2026-02-15
  */
+@Slf4j
 @Service
 @Primary
 public class OssStorageService implements StorageService {
@@ -46,7 +48,7 @@ public class OssStorageService implements StorageService {
             PutObjectRequest request = new PutObjectRequest(bucket, objectName, file.getInputStream(), metadata);
             ossClient.putObject(request);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("OSS upload failed objectName={} bucket={}", objectName, bucket, e);
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
     }
@@ -63,7 +65,7 @@ public class OssStorageService implements StorageService {
             PutObjectRequest request = new PutObjectRequest(bucket, objectName, inputStream, metadata);
             ossClient.putObject(request);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("OSS upload failed objectName={} bucket={}", objectName, bucket, e);
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
     }
@@ -73,8 +75,7 @@ public class OssStorageService implements StorageService {
         try {
             ossClient.deleteObject(bucket, objectName);
         } catch (Exception e) {
-            // 回滚删除失败：不抛异常，避免覆盖原始业务错误
-            e.printStackTrace();
+            log.warn("OSS delete failed objectName={} bucket={}", objectName, bucket, e);
         }
     }
 

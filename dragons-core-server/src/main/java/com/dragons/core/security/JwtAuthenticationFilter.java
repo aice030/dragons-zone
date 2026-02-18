@@ -15,6 +15,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.lang.NonNull;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -30,6 +31,7 @@ import java.util.Collections;
  * @author aice
  * @since 2026-01-21
  */
+@Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Autowired
@@ -64,6 +66,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         // token无效：直接返回401（统一Result格式）
         if (!jwtUtil.validateToken(token)) {
+            log.warn("JWT invalid or expired, path={}", path);
             writeUnauthorized(response, ResponseCode.TOKEN_INVALID);
             return;
         }
@@ -72,6 +75,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String loginName = jwtUtil.getLoginNameFromToken(token);
 
         if (userId == null || loginName == null) {
+            log.warn("JWT payload missing userId/loginName, path={}", path);
             writeUnauthorized(response, ResponseCode.TOKEN_INVALID);
             return;
         }

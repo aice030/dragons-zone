@@ -8,6 +8,7 @@ import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.ITreeHoleBlacklistService;
 import com.dragons.core.service.IUserService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +22,7 @@ import java.time.LocalDateTime;
  * @author aice
  * @since 2026-02-03
  */
+@Slf4j
 @Service
 public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistMapper, TreeHoleBlacklist> implements ITreeHoleBlacklistService {
 
@@ -37,12 +39,15 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
     @Override
     public void addBlock(Long ownerId, Long blockedUserId, String reason) {
         if (ownerId == null || ownerId <= 0 || blockedUserId == null || blockedUserId <= 0) {
+            log.warn("addBlock invalid params ownerId={} blockedUserId={}", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         if (ownerId.equals(blockedUserId)) {
+            log.warn("addBlock denied ownerId={} blockedUserId={} reason=cannot_block_self", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         if (userService.getById(blockedUserId) == null) {
+            log.warn("addBlock denied ownerId={} blockedUserId={} reason=blocked_user_not_found", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.BLOCK_USER_NOT_FOUND);
         }
 
@@ -53,6 +58,7 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
 
         if (existing != null) {
             if (existing.getState() != null && existing.getState() == STATE_ACTIVE) {
+                log.info("treehole block already active ownerId={} blockedUserId={}", ownerId, blockedUserId);
                 return;
             }
             existing.setState(STATE_ACTIVE);
@@ -61,8 +67,10 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
                 existing.setReason(reason.trim().isEmpty() ? null : reason.trim());
             }
             if (!updateByIdWithRetry(existing)) {
+                log.error("addBlock failed ownerId={} blockedUserId={} reason=db_update_reactivate_failed", ownerId, blockedUserId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
+            log.info("treehole block success ownerId={} blockedUserId={} action=reactivate", ownerId, blockedUserId);
             return;
         }
 
@@ -73,8 +81,10 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
         one.setReason(reason != null && !reason.trim().isEmpty() ? reason.trim() : null);
         one.setUpdateTime(LocalDateTime.now());
         if (!saveWithRetry(one)) {
+            log.error("addBlock failed ownerId={} blockedUserId={} reason=db_insert_failed", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("treehole block success ownerId={} blockedUserId={} action=insert", ownerId, blockedUserId);
     }
 
     private boolean saveWithRetry(TreeHoleBlacklist entity) {
@@ -104,6 +114,7 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
     @Override
     public void removeBlock(Long ownerId, Long blockedUserId) {
         if (ownerId == null || ownerId <= 0 || blockedUserId == null || blockedUserId <= 0) {
+            log.warn("removeBlock invalid params ownerId={} blockedUserId={}", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
         TreeHoleBlacklist existing = this.getOne(
@@ -111,16 +122,20 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
                         .eq(TreeHoleBlacklist::getOwnerId, ownerId)
                         .eq(TreeHoleBlacklist::getBlockedUserId, blockedUserId));
         if (existing == null) {
+            log.info("removeBlock idempotent ownerId={} blockedUserId={} reason=record_not_found", ownerId, blockedUserId);
             return;
         }
         if (existing.getState() != null && existing.getState() == STATE_INACTIVE) {
+            log.info("removeBlock idempotent ownerId={} blockedUserId={} reason=already_inactive", ownerId, blockedUserId);
             return;
         }
         existing.setState(STATE_INACTIVE);
         existing.setUpdateTime(LocalDateTime.now());
         if (!updateByIdWithRetry(existing)) {
+            log.error("removeBlock failed ownerId={} blockedUserId={} reason=db_update_failed", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("treehole unblock success ownerId={} blockedUserId={}", ownerId, blockedUserId);
     }
 
     @Override

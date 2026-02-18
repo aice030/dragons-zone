@@ -62,7 +62,9 @@ public class SecurityConfig {
 
         // JWT过滤器：把 Authorization: Bearer <token> 转换为 Spring Security 的认证信息
         http.addFilterBefore(jwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class);
-        
+        // 请求日志：在 JWT 之后执行，可记录 userId；每条请求一条 INFO
+        http.addFilterAfter(new RequestLoggingFilter(), JwtAuthenticationFilter.class);
+
         return http.build();
     }
 

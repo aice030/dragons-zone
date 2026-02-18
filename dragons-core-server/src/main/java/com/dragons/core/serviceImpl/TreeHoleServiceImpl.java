@@ -7,6 +7,7 @@ import com.dragons.core.dao.TreeHoleMapper;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.ITreeHoleService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
  * @author aice
  * @since 2026-01-17
  */
+@Slf4j
 @Service
 public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> implements ITreeHoleService {
 
@@ -26,19 +28,23 @@ public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> i
     public void updateTreeHoleState(Long ownerId, Long currentUserId, Byte state) {
         // 1) 参数与登录态校验
         if (currentUserId == null) {
+            log.warn("updateTreeHoleState denied ownerId={} reason=currentUserId_null", ownerId);
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
         if (ownerId == null || state == null) {
+            log.warn("updateTreeHoleState invalid params ownerId={} currentUserId={} state={}", ownerId, currentUserId, state);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
         // 2) 仅允许树洞主人本人修改自己的树洞状态
         if (!ownerId.equals(currentUserId)) {
+            log.warn("updateTreeHoleState denied ownerId={} currentUserId={} reason=not_owner", ownerId, currentUserId);
             throw new BusinessException(ResponseCode.FORBIDDEN);
         }
 
         // 3) 仅允许设置 0=正常 或 2=禁止投递
         if (state != 0 && state != 2) {
+            log.warn("updateTreeHoleState invalid state ownerId={} state={}", ownerId, state);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
@@ -47,6 +53,7 @@ public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> i
                 new LambdaQueryWrapper<TreeHole>().eq(TreeHole::getOwnerId, ownerId)
         );
         if (treeHole == null) {
+            log.warn("updateTreeHoleState denied ownerId={} reason=treehole_not_found", ownerId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
@@ -54,16 +61,23 @@ public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> i
         treeHole.setState(state);
         boolean updated = updateByIdWithRetry(treeHole);
         if (!updated) {
+            log.error("updateTreeHoleState failed ownerId={} state={} reason=db_update_failed", ownerId, state);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        log.info("treehole state updated ownerId={} state={}", ownerId, state);
     }
 
     @Override
     public TreeHole getByOwnerIdForUpdate(Long ownerId) {
         if (ownerId == null) {
+            log.warn("getByOwnerIdForUpdate invalid params ownerId=null");
             return null;
         }
-        return baseMapper.selectByOwnerIdForUpdate(ownerId);
+        TreeHole result = baseMapper.selectByOwnerIdForUpdate(ownerId);
+        if (result == null) {
+            log.warn("getByOwnerIdForUpdate treehole not found ownerId={}", ownerId);
+        }
+        return result;
     }
 
     @Override
@@ -71,9 +85,13 @@ public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> i
         if (ownerId == null) {
             return null;
         }
-        return this.getOne(
+        TreeHole result = this.getOne(
                 new LambdaQueryWrapper<TreeHole>().eq(TreeHole::getOwnerId, ownerId)
         );
+        if (result == null) {
+            log.info("getByOwnerId treehole not found ownerId={}", ownerId);
+        }
+        return result;
     }
 
     /** 写操作重试：最多 3 次，防止临时网络/锁冲突导致失败 */

@@ -2,6 +2,7 @@ package com.dragons.core.storage;
 
 import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.exception.BusinessException;
+import lombok.extern.slf4j.Slf4j;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -21,6 +22,7 @@ import java.io.ByteArrayInputStream;
  * @author aice
  * @since 2026-01-21
  */
+@Slf4j
 @Service
 public class MinioStorageService implements StorageService {
 
@@ -45,8 +47,7 @@ public class MinioStorageService implements StorageService {
                             .build()
             );
         } catch (Exception e) {
-            // 打印详细错误信息，便于调试
-            e.printStackTrace();
+            log.error("MinIO upload failed objectName={} bucket={}", objectName, bucket, e);
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
     }
@@ -63,8 +64,7 @@ public class MinioStorageService implements StorageService {
                             .build()
             );
         } catch (Exception e) {
-            // 打印详细错误信息，便于调试
-            e.printStackTrace();
+            log.error("MinIO upload failed objectName={} bucket={}", objectName, bucket, e);
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
     }
@@ -79,8 +79,7 @@ public class MinioStorageService implements StorageService {
                             .build()
             );
         } catch (Exception e) {
-            // 回滚删除失败：这里不再抛异常，避免覆盖原始业务错误
-            e.printStackTrace();
+            log.warn("MinIO delete failed objectName={} bucket={}", objectName, bucket, e);
         }
     }
 
