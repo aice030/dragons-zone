@@ -1,5 +1,7 @@
 package com.dragons.core.service;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.dragons.core.dto.MediaAuditResult;
 import com.dragons.core.entity.Media;
 import com.baomidou.mybatisplus.extension.service.IService;
@@ -206,15 +208,16 @@ public interface IMediaService extends IService<Media> {
         public Long uploaderId;
         public LocalDateTime updateTime;
 
-        public MediaDetailResult(Long id,
-                                 Byte category,
-                                 String title,
-                                 String description,
-                                 String storagePath,
-                                 String coverPath,
-                                 String coverUrl,
-                                 Long uploaderId,
-                                 LocalDateTime updateTime) {
+        @JsonCreator
+        public MediaDetailResult(@JsonProperty("id") Long id,
+                                 @JsonProperty("category") Byte category,
+                                 @JsonProperty("title") String title,
+                                 @JsonProperty("description") String description,
+                                 @JsonProperty("storagePath") String storagePath,
+                                 @JsonProperty("coverPath") String coverPath,
+                                 @JsonProperty("coverUrl") String coverUrl,
+                                 @JsonProperty("uploaderId") Long uploaderId,
+                                 @JsonProperty("updateTime") LocalDateTime updateTime) {
             this.id = id;
             this.category = category;
             this.title = title;

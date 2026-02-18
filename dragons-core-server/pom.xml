@@ -110,6 +110,12 @@
             <version>3.17.4</version>
         </dependency>
 
+        <!-- Redis（Spring Data Redis） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- 测试核心依赖（已包含Junit 5 + SpringTest + AssertJ等） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -7,6 +7,7 @@ import com.dragons.core.dao.MediaMapper;
 import com.dragons.core.entity.MediaVisible;
 import com.dragons.core.entity.User;
 import com.dragons.core.exception.BusinessException;
+import com.dragons.core.cache.MediaRedisCacheService;
 import com.dragons.core.service.IMediaService;
 import com.dragons.core.service.IMediaVisibleService;
 import com.dragons.core.service.IUserService;
@@ -48,12 +49,17 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final StorageService storageService;
     private final IMediaVisibleService mediaVisibleService;
     private final IUserService userService;
+    private final MediaRedisCacheService mediaRedisCacheService;
 
     @Autowired
-    public MediaServiceImpl(StorageService storageService, IMediaVisibleService mediaVisibleService, IUserService userService) {
+    public MediaServiceImpl(StorageService storageService,
+                            IMediaVisibleService mediaVisibleService,
+                            IUserService userService,
+                            MediaRedisCacheService mediaRedisCacheService) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
         this.userService = userService;
+        this.mediaRedisCacheService = mediaRedisCacheService;
     }
 
     @Override
@@ -309,6 +315,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
         // 第四步：物理删除 media 记录
         this.removeById(mediaId);
+        // [Redis] 写时删除：媒体已删除，删除缓存
+        mediaRedisCacheService.evict(mediaId);
         log.info("delete success mediaId={} userId={}", mediaId, currentUserId);
     }
 
@@ -316,6 +324,12 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     public MediaDetailResult getMediaDetail(Long mediaId, Long currentUserId) {
         if (mediaId == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+
+        // [Redis] 先查缓存，命中则直接返回。缓存中仅存储 state=0（已审核通过）的媒体，游客/任何人可查看
+        MediaDetailResult cached = mediaRedisCacheService.get(mediaId);
+        if (cached != null) {
+            return cached;
         }
 
         Media media = this.getById(mediaId);
@@ -363,7 +377,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
 
-        return new MediaDetailResult(
+        MediaDetailResult result = new MediaDetailResult(
                 media.getId(),
                 media.getCategory(),
                 media.getTitle(),
@@ -374,6 +388,11 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 media.getUploaderId(),
                 media.getUpdateTime()
         );
+        // [Redis] 仅 state=0（已审核通过）时写入缓存，供后续游客查询命中
+        if (media.getState() != null && media.getState() == 0) {
+            mediaRedisCacheService.put(mediaId, result);
+        }
+        return result;
     }
 
     @Override
@@ -420,6 +439,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             log.error("update failed mediaId={} reason=db_update_failed", mediaId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
+        // [Redis] 写时删除：媒体信息变更，删除缓存
+        mediaRedisCacheService.evict(mediaId);
         log.info("media update success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), null);
     }
@@ -491,6 +512,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         } catch (Exception ignored) {
             // ignore
         }
+        // [Redis] 写时删除：封面变更，删除缓存
+        mediaRedisCacheService.evict(mediaId);
         log.info("media cover update success mediaId={}", mediaId);
         return new CoverUpdateResult(mediaId, coverPath, coverUrl);
     }
@@ -576,6 +599,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
         }
+        // [Redis] 写时删除：可见范围变更或 state 2→0 修正，删除缓存
+        mediaRedisCacheService.evict(mediaId);
         log.info("media visible rebuild success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);
     }
@@ -933,6 +958,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             // 逐个更新，失败则记录到失败列表
             if (!this.updateById(media)) {
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
+            } else {
+                // [Redis] 写时删除：审核通过会改变 state，删除该媒体缓存
+                mediaRedisCacheService.evict(media.getId());
             }
         }
         int successCount = mediaIds.size() - failedItems.size();
@@ -982,6 +1010,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             // 逐个更新，失败则记录到失败列表（驳回后保留对象存储中的文件和 media_visible，用户可修改后重新提交）
             if (!this.updateById(media)) {
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
+            } else {
+                // [Redis] 写时删除：审核驳回会改变 state，删除该媒体缓存
+                mediaRedisCacheService.evict(media.getId());
             }
         }
         int successCount = mediaIds.size() - failedItems.size();
