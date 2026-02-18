@@ -1,8 +1,8 @@
 # Dragons Zone 前端 - 多阶段构建，目标平台 Linux
 # 构建时使用空 API baseURL，由同机 nginx 将 /api 代理到后端
 # 在 macOS 上构建时可用: docker build --platform linux/amd64 -t dragons-frontend .
-
-FROM --platform=$TARGETPLATFORM node:20-alpine AS builder
+# 1. 构建阶段：用阿里云镜像源的 maven 镜像
+FROM --platform=$TARGETPLATFORM registry.cn-hangzhou.aliyuncs.com/acs/node:20-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json* ./

@@ -1,7 +1,7 @@
 # Dragons Zone 后端 - 多阶段构建，目标平台 Linux
 # 在 macOS 上构建时可用: docker build --platform linux/amd64 -t dragons-backend .
-
-FROM --platform=$TARGETPLATFORM maven:3.9-eclipse-temurin-17-alpine AS builder
+# 1. 构建阶段：用阿里云镜像源的 maven 镜像
+FROM --platform=$TARGETPLATFORM registry.cn-hangzhou.aliyuncs.com/acs/maven:3.9-eclipse-temurin-17-alpine AS builder
 WORKDIR /app
 
 # 先只复制 pom，利用 Docker 层缓存
