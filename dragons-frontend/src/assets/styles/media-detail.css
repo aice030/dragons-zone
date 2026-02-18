@@ -50,11 +50,19 @@
   overflow: hidden;
 }
 
-/* 关闭按钮 */
-.close-btn {
+/* 顶部操作栏 */
+.top-action-bar {
   position: absolute;
   top: 2rem;
   right: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  z-index: 1002;
+}
+
+/* 关闭按钮 */
+.close-btn {
   width: 48px;
   height: 48px;
   border: none;
@@ -64,7 +72,6 @@
   line-height: 1;
   border-radius: 50%;
   cursor: pointer;
-  z-index: 1002;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -74,6 +81,99 @@
 .close-btn:hover {
   background: rgba(255, 255, 255, 0.3);
   transform: rotate(90deg);
+}
+
+/* 顶部操作图标组 */
+.top-action-icons {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 顶部点赞按钮 */
+.top-like-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  border-radius: 24px;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+  backdrop-filter: blur(10px);
+}
+
+.top-like-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 1);
+}
+
+.top-like-btn.liked {
+  background: rgba(255, 71, 87, 0.3);
+  color: #ff4757;
+}
+
+.top-like-btn.liked:hover {
+  background: rgba(255, 71, 87, 0.4);
+  color: #ff3838;
+}
+
+.top-like-btn .like-icon {
+  width: 20px;
+  height: 20px;
+  transition: transform 0.2s ease;
+}
+
+.top-like-btn:hover .like-icon {
+  transform: scale(1.1);
+}
+
+.top-like-btn.liked .like-icon {
+  animation: likePulse 0.3s ease;
+}
+
+.top-like-btn .like-count {
+  font-weight: 500;
+  user-select: none;
+}
+
+/* 顶部下载按钮 */
+.top-download-btn {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.top-download-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 1);
+  transform: scale(1.1);
+}
+
+.top-download-btn:active {
+  transform: scale(0.95);
+}
+
+.top-download-btn .download-icon {
+  width: 20px;
+  height: 20px;
+  transition: transform 0.2s ease;
+}
+
+.top-download-btn:hover .download-icon {
+  transform: scale(1.1);
 }
 
 /* 加载容器 */
@@ -465,12 +565,40 @@
 
 /* 响应式设计 - 移动端 */
 @media (max-width: 736px) {
+  .top-action-bar {
+    top: 1rem;
+    right: 1rem;
+    gap: 0.5rem;
+  }
+
   .close-btn {
     width: 40px;
     height: 40px;
     font-size: 1.5rem;
-    top: 1rem;
-    right: 1rem;
+  }
+
+  .top-action-icons {
+    gap: 0.4rem;
+  }
+
+  .top-like-btn {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+  }
+
+  .top-like-btn .like-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .top-download-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .top-download-btn .download-icon {
+    width: 18px;
+    height: 18px;
   }
 
   .media-info {

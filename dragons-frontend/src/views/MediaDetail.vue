@@ -3,7 +3,55 @@
     <div class="media-detail-container" v-if="!error">
       <div class="media-detail-backdrop" @click="handleClose"></div>
       <div class="media-detail-content">
-      <button class="close-btn" @click="handleClose" aria-label="关闭">×</button>
+      <!-- 顶部操作栏：关闭、点赞、下载 -->
+      <div class="top-action-bar">
+        <button class="close-btn" @click="handleClose" aria-label="关闭">×</button>
+        
+        <!-- 点赞和下载按钮（仅在媒体加载完成后显示） -->
+        <div v-if="!loading && mediaDetail" class="top-action-icons">
+          <!-- 点赞按钮 -->
+          <button 
+            class="top-like-btn" 
+            :class="{ 'liked': isLiked }"
+            @click="handleLike"
+            aria-label="点赞"
+          >
+            <svg class="like-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path 
+                v-if="!isLiked" 
+                d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+                stroke="currentColor"
+                stroke-width="1.5"
+                fill="none"
+              />
+              <path 
+                v-else 
+                d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+                fill="currentColor"
+              />
+            </svg>
+            <span class="like-count">{{ likeCount }}</span>
+          </button>
+          
+          <!-- 下载按钮 -->
+          <button 
+            class="top-download-btn"
+            @click="handleDownload"
+            :title="mediaDetail.title || '下载'"
+            aria-label="下载"
+          >
+            <svg class="download-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path 
+                d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
       
       <!-- 左箭头按钮 -->
       <button 
@@ -75,53 +123,9 @@
           </div>
         </div>
         
-        <!-- 媒体信息 -->
+        <!-- 媒体信息（底部时间信息） -->
         <div class="media-info">
           <div class="media-meta">
-            <div class="action-icons">
-              <!-- 点赞按钮 -->
-              <button 
-                class="like-btn" 
-                :class="{ 'liked': isLiked }"
-                @click="handleLike"
-              >
-                <svg class="like-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <!-- 空心爱心路径 -->
-                  <path 
-                    v-if="!isLiked" 
-                    d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    fill="none"
-                  />
-                  <!-- 实心爱心路径 -->
-                  <path 
-                    v-else 
-                    d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
-                    fill="currentColor"
-                  />
-                </svg>
-                <span class="like-count">{{ likeCount }}</span>
-              </button>
-              
-              <!-- 下载按钮 -->
-              <button 
-                v-if="mediaDetail"
-                class="download-icon-btn"
-                @click="handleDownload"
-                :title="mediaDetail.title || '下载'"
-              >
-                <svg class="download-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path 
-                    d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </button>
-            </div>
             <span v-if="mediaDetail.updateTime" class="media-time">
               {{ formatTime(mediaDetail.updateTime) }}
             </span>
@@ -348,106 +352,17 @@ const handleDownload = async () => {
     // 调用后端API获取最新的临时下载链接
     const response = await getMediaDownloadUrl(props.mediaId)
     
-    if (response?.data?.downloadUrl) {
-      const tempDownloadUrl = response.data.downloadUrl
-      
-      // 使用 fetch 下载文件内容
-      try {
-        const fileResponse = await fetch(tempDownloadUrl)
-        if (!fileResponse.ok) {
-          throw new Error('下载失败')
-        }
-        
-        const blob = await fileResponse.blob()
-        
-        // 获取文件扩展名（从 URL 提取）
-        const urlExtension = tempDownloadUrl.split('.').pop()?.split('?')[0] || ''
-        
-        // 生成默认文件名
-        let finalFileName = ''
-        const mediaTitle = mediaDetail.value?.title?.trim()
-        
-        if (mediaTitle) {
-          // 如果标题存在，使用 {title}.{扩展名}
-          finalFileName = mediaTitle.includes('.') ? mediaTitle : `${mediaTitle}.${urlExtension}`
-        } else {
-          // 如果标题为空，使用默认名称
-          const category = mediaDetail.value?.category
-          const defaultName = category === 0 ? 'dragons-img' : 'dragons-video'
-          finalFileName = `${defaultName}.${urlExtension}`
-        }
-        
-        // 尝试使用 File System Access API 让用户选择保存路径（Chrome/Edge）
-        if ('showSaveFilePicker' in window) {
-          try {
-            const fileHandle = await window.showSaveFilePicker({
-              suggestedName: finalFileName,
-              types: [{
-                description: '媒体文件',
-                accept: {
-                  [blob.type || 'application/octet-stream']: [`.${urlExtension}`]
-                }
-              }]
-            })
-            
-            const writable = await fileHandle.createWritable()
-            await writable.write(blob)
-            await writable.close()
-            return // 成功保存，直接返回
-          } catch (saveError) {
-            // 用户取消了保存对话框，或者 API 调用失败
-            if (saveError.name === 'AbortError') {
-              // 用户取消，不显示错误
-              return
-            }
-            console.warn('File System Access API 失败，使用传统下载方式:', saveError)
-            // 继续使用传统下载方式
-          }
-        }
-        
-        // 回退到传统下载方式（会使用浏览器的默认下载路径或弹出保存对话框）
-        const blobUrl = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = blobUrl
-        // 不设置 download 属性，让浏览器使用默认行为（可能会弹出保存对话框）
-        link.download = finalFileName
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        
-        // 释放 blob URL
-        setTimeout(() => {
-          URL.revokeObjectURL(blobUrl)
-        }, 100)
-      } catch (fetchError) {
-        console.error('下载文件失败:', fetchError)
-        // 如果 fetch 失败，回退到直接使用链接下载
-        // 生成默认文件名
-        const urlExtension = tempDownloadUrl.split('.').pop()?.split('?')[0] || ''
-        const mediaTitle = mediaDetail.value?.title?.trim()
-        let fallbackFileName = ''
-        
-        if (mediaTitle) {
-          fallbackFileName = mediaTitle.includes('.') ? mediaTitle : `${mediaTitle}.${urlExtension}`
-        } else {
-          const category = mediaDetail.value?.category
-          const defaultName = category === 0 ? 'dragons-img' : 'dragons-video'
-          fallbackFileName = `${defaultName}.${urlExtension}`
-        }
-        
-        const link = document.createElement('a')
-        link.href = tempDownloadUrl
-        link.download = fallbackFileName
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-      }
-    } else {
+    if (!response?.data?.downloadUrl) {
       console.error('获取下载链接失败：响应数据为空')
+      return
     }
+    
+    const tempDownloadUrl = response.data.downloadUrl
+    
+    // 直接打开下载链接，让浏览器处理下载（避免前端访问OSS的跨域问题）
+    window.open(tempDownloadUrl, '_blank')
   } catch (error) {
     console.error('获取下载链接失败:', error)
-    // 可以在这里添加错误提示，比如使用 toast 组件
   } finally {
     // 1秒后解除防刷状态
     if (downloadThrottleTimer) {
