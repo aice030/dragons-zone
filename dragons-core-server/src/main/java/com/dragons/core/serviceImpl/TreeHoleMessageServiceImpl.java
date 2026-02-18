@@ -415,19 +415,6 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         }
     }
 
-    /** 写操作重试：最多 3 次，防止临时网络/锁冲突导致失败 */
-    private boolean saveWithRetry(TreeHoleMessage message) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.save(message)) {
-                    return true;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        return false;
-    }
-
     private boolean updateByIdWithRetry(TreeHoleMessage message) {
         for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
             try {
