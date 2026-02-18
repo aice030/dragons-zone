@@ -3,7 +3,6 @@ package com.dragons.core.service;
 import com.dragons.core.dto.MediaAuditResult;
 import com.dragons.core.entity.Media;
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.dragons.core.service.IMediaVisibleService;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
