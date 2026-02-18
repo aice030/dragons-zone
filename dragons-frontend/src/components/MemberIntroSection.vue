@@ -49,8 +49,10 @@ const introLines = computed(() => {
   const lines = []
   if (m.fullName) lines.push({ title: '姓名', content: m.fullName })
   if (m.waihao) lines.push({ title: '外号', content: m.waihao })
-  if (m.specialties) lines.push({ title: '特长', content: m.specialties })
+  if (m.mbti) lines.push({ title: 'MBTI', content: m.mbti })
   if (m.hobbies) lines.push({ title: '爱好', content: m.hobbies })
+  if (m.talents) lines.push({ title: '特长', content: m.talents })
+  if (m.specialties) lines.push({ title: '才艺', content: m.specialties })
   if (m.dream) lines.push({ title: '梦想', content: m.dream })
   return lines
 })
@@ -126,6 +128,7 @@ const introLines = computed(() => {
   color: var(--text-primary, #2c3e50);
   max-width: 100%;
   word-wrap: break-word;
+  white-space: pre-line;
 }
 
 .member-intro-right {

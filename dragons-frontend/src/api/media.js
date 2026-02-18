@@ -1,8 +1,10 @@
 import axios from 'axios'
 
-// 配置 axios 基础 URL（根据实际后端地址调整）
+// 配置 axios 基础 URL：开发环境默认 localhost，上云后使用相对路径（同机 nginx 代理 /api）
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080',
+  baseURL:
+    import.meta.env.VITE_API_BASE_URL ??
+    (import.meta.env.DEV ? 'http://localhost:8080' : ''),
   timeout: 10000
 })
 

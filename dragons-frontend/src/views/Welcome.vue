@@ -3,7 +3,9 @@
     <div class="welcome-backdrop"></div>
     <div class="welcome-content">
       <h1 class="welcome-title">Dragons Zone</h1>
-      <p class="welcome-desc">欢迎来到这里</p>
+      <h1 class="welcome-desc""> </h1>
+      <p class="welcome-desc">热烈欢迎所有喜欢发癫吧后浪的拽根！</p>
+      <p class="welcome-desc">这里有后浪们的图片/视频集合，同时也希望有资源的拽根们可以登录后分享更多后浪的内容哟</p>
       <router-link to="/browse" class="welcome-btn">进入</router-link>
     </div>
   </div>
@@ -26,7 +28,7 @@
   position: absolute;
   inset: 0;
   z-index: 0;
-  background-image: url('/home-background.jpg');
+  background-image: url('/images/home-background.jpg');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;

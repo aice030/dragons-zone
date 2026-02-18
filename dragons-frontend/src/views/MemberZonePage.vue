@@ -272,7 +272,7 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   z-index: 0;
-  background-image: url('/home-background.jpg');
+  background-image: url('/images/home-background.jpg');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;

@@ -4,16 +4,7 @@
 
     <div class="media-browse-content">
       <!-- 导航栏 -->
-      <NavBar>
-        <template #left>
-          <router-link to="/browse" class="nav-back-btn">
-            <svg class="back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M19 12H5M12 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span>返回浏览</span>
-          </router-link>
-        </template>
-      </NavBar>
+      <NavBar />
       <MediaDetailModal
         v-model:visible="showDetailModal"
         :media-id="detailMediaId"
@@ -90,7 +81,6 @@
           <template v-else>
             <div class="my-uploads-container">
               <div class="my-uploads-header">
-                <h1 class="page-title">我的上传</h1>
                 <div class="header-actions-row">
                   <div class="category-selector-inline">
                     <button

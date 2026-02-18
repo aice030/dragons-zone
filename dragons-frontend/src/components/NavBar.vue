@@ -8,16 +8,22 @@
         </slot>
       </div>
 
-      <!-- 中间：图片&视频集按钮 -->
-      <div class="nav-center">
+      <!-- 图片&视频集按钮（独立定位在logo左侧） -->
+      <div class="nav-media-collection">
         <router-link to="/browse" class="nav-media-collection-btn">
           图片&视频集
         </router-link>
       </div>
 
-      <!-- 右侧：成员专区按钮和下拉菜单 + 登录/注册 或 昵称下拉菜单 -->
-      <div class="nav-right">
-        <!-- 成员专区按钮和下拉菜单 -->
+      <!-- 中间：Logo -->
+      <div class="nav-center">
+        <router-link to="/" class="nav-logo-link">
+          <img src="/images/dragons-zone-logo.jpg" alt="Dragons Zone" class="nav-logo" />
+        </router-link>
+      </div>
+
+      <!-- 成员专区按钮和下拉菜单（独立定位在logo右侧） -->
+      <div class="nav-member-zone">
         <div class="member-zone-dropdown" @click.stop>
           <button
             class="member-zone-btn"
@@ -52,8 +58,10 @@
             </div>
           </Transition>
         </div>
+      </div>
 
-        <!-- 登录/注册 或 昵称下拉菜单 -->
+      <!-- 右侧：登录/注册 或 昵称下拉菜单（固定在最右侧） -->
+      <div class="nav-right">
         <div class="nav-user-area">
           <template v-if="userStore.isLoggedIn">
             <div class="user-menu-dropdown" @click.stop>
@@ -270,6 +278,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   height: 100%;
+  position: relative;
 }
 
 /* 导航栏左侧区域 */
@@ -318,6 +327,36 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.nav-logo-link {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  transition: opacity 0.3s ease;
+}
+
+.nav-logo-link:hover {
+  opacity: 0.8;
+}
+
+.nav-logo {
+  height: 2.5rem;
+  width: 2.5rem;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+/* 图片&视频集区域（独立定位在logo左侧） */
+.nav-media-collection {
+  position: absolute;
+  left: 50%;
+  transform: translateX(calc(-50% - 10rem));
+  display: flex;
+  align-items: center;
 }
 
 .nav-media-collection-btn {
@@ -340,7 +379,16 @@ onBeforeUnmount(() => {
   color: #4a90e2;
 }
 
-/* 导航栏右侧区域 */
+/* 成员专区区域（独立定位在logo右侧） */
+.nav-member-zone {
+  position: absolute;
+  left: 50%;
+  transform: translateX(calc(-50% + 10rem));
+  display: flex;
+  align-items: center;
+}
+
+/* 导航栏右侧区域（固定在最右侧） */
 .nav-right {
   flex: 1;
   display: flex;
