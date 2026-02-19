@@ -208,6 +208,8 @@ public interface IMediaService extends IService<Media> {
         public Long uploaderId;
         public LocalDateTime updateTime;
 
+        public MediaDetailResult(){}
+
         @JsonCreator
         public MediaDetailResult(@JsonProperty("id") Long id,
                                  @JsonProperty("category") Byte category,

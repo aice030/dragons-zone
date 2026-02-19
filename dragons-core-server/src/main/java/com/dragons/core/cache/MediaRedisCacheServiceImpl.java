@@ -8,7 +8,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * 媒体核心数据 Redis 缓存服务实现
@@ -40,6 +39,11 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
             if (value instanceof Media) {
                 log.info("media core cache hit mediaId={}", mediaId);
                 return (Media) value;
+            }
+            // 识别空值标记（防止缓存穿透）
+            if (value instanceof String && NULL_VALUE_MARKER.equals(value)) {
+                log.info("media core null value cache hit mediaId={}", mediaId);
+                return null;
             }
         } catch (Exception e) {
             log.error("media core cache get failed mediaId={} error={}", mediaId, e.getMessage());
@@ -256,6 +260,126 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
         } catch (Exception e) {
             log.error("my upload list cache evict failed uploaderId={} category={} error={}", 
                     uploaderId, category, e.getMessage());
+        }
+    }
+
+    @Override
+    public void putNullValue(Long mediaId) {
+        if (mediaId == null) {
+            return;
+        }
+        String key = MEDIA_CORE_KEY_PREFIX + mediaId;
+        try {
+            redisTemplate.opsForValue().set(key, NULL_VALUE_MARKER, NULL_VALUE_TTL_SECONDS, TimeUnit.SECONDS);
+            log.info("media core null value cache put mediaId={}", mediaId);
+        } catch (Exception e) {
+            log.error("media core null value cache put failed mediaId={} error={}", mediaId, e.getMessage());
+        }
+    }
+
+    @Override
+    public boolean tryLock(Long mediaId, String requestId) {
+        if (mediaId == null || requestId == null || requestId.trim().isEmpty()) {
+            return false;
+        }
+        String key = LOCK_KEY_PREFIX + mediaId;
+        try {
+            // 使用 SETNX 原子操作：SET lock:media:core:{mediaId} {requestId} EX 5 NX
+            // requestId 作为锁的值，用于标识锁的持有者
+            Boolean success = redisTemplate.opsForValue().setIfAbsent(
+                    key,
+                    requestId,  // 使用 requestId 作为锁的值
+                    LOCK_TTL_SECONDS,
+                    TimeUnit.SECONDS
+            );
+            if (Boolean.TRUE.equals(success)) {
+                log.info("distributed lock acquired mediaId={} requestId={}", mediaId, requestId);
+                return true;
+            } else {
+                log.debug("distributed lock already held by another request mediaId={}", mediaId);
+                return false;
+            }
+        } catch (Exception e) {
+            log.error("try lock failed mediaId={} requestId={} error={}", mediaId, requestId, e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    public void unlock(Long mediaId, String requestId) {
+        if (mediaId == null || requestId == null || requestId.trim().isEmpty()) {
+            return;
+        }
+        String key = LOCK_KEY_PREFIX + mediaId;
+        try {
+            // Lua 脚本：原子性地检查并删除锁
+            // 只有当锁的值等于 requestId 时才删除，防止误释放其他线程的锁
+            String luaScript = 
+                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                "    return redis.call('del', KEYS[1]) " +
+                "else " +
+                "    return 0 " +
+                "end";
+            
+            org.springframework.data.redis.core.script.DefaultRedisScript<Long> script = 
+                    new org.springframework.data.redis.core.script.DefaultRedisScript<>();
+            script.setScriptText(luaScript);
+            script.setResultType(Long.class);
+            
+            Long result = redisTemplate.execute(
+                    script,
+                    Collections.singletonList(key),
+                    requestId
+            );
+            
+            if (result != null && result > 0) {
+                log.info("distributed lock released mediaId={} requestId={}", mediaId, requestId);
+            } else {
+                log.warn("distributed lock release failed: lock not held by this request mediaId={} requestId={}", mediaId, requestId);
+            }
+        } catch (Exception e) {
+            log.error("unlock failed mediaId={} requestId={} error={}", mediaId, requestId, e.getMessage());
+        }
+    }
+
+    @Override
+    public boolean renewLock(Long mediaId, String requestId) {
+        if (mediaId == null || requestId == null || requestId.trim().isEmpty()) {
+            return false;
+        }
+        String key = LOCK_KEY_PREFIX + mediaId;
+        try {
+            // Lua 脚本：原子性地检查并续期锁
+            // 只有当锁的值等于 requestId 时才续期，防止续期其他线程的锁
+            String luaScript = 
+                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                "    return redis.call('expire', KEYS[1], ARGV[2]) " +
+                "else " +
+                "    return 0 " +
+                "end";
+            
+            org.springframework.data.redis.core.script.DefaultRedisScript<Long> script = 
+                    new org.springframework.data.redis.core.script.DefaultRedisScript<>();
+            script.setScriptText(luaScript);
+            script.setResultType(Long.class);
+            
+            Long result = redisTemplate.execute(
+                    script,
+                    Collections.singletonList(key),
+                    requestId,
+                    String.valueOf(LOCK_TTL_SECONDS)
+            );
+            
+            if (result != null && result > 0) {
+                log.debug("distributed lock renewed mediaId={} requestId={}", mediaId, requestId);
+                return true;
+            } else {
+                log.debug("distributed lock renew failed: lock not held by this request mediaId={} requestId={}", mediaId, requestId);
+                return false;
+            }
+        } catch (Exception e) {
+            log.error("renew lock failed mediaId={} requestId={} error={}", mediaId, requestId, e.getMessage());
+            return false;
         }
     }
 }

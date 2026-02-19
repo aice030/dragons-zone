@@ -32,6 +32,26 @@ public interface MediaRedisCacheService {
     int MEDIA_CORE_TTL_SECONDS = 600;
 
     /**
+     * 空值缓存标记（用于防止缓存穿透）
+     */
+    String NULL_VALUE_MARKER = "__NULL__";
+
+    /**
+     * 空值缓存 TTL（秒）
+     */
+    int NULL_VALUE_TTL_SECONDS = 60;
+
+    /**
+     * 分布式锁 Key 前缀（用于防止缓存击穿）
+     */
+    String LOCK_KEY_PREFIX = "lock:media:core:";
+
+    /**
+     * 分布式锁 TTL（秒）
+     */
+    int LOCK_TTL_SECONDS = 5;
+
+    /**
      * 媒体列表缓存 Key 前缀
      */
     String MEDIA_LIST_KEY_PREFIX = "media:list:";
@@ -138,4 +158,37 @@ public interface MediaRedisCacheService {
      * @param category 分类：null=all，0=图片，1=视频
      */
     void evictMyUploadList(Long uploaderId, Byte category);
+
+    /**
+     * 写入空值缓存（防止缓存穿透）
+     *
+     * @param mediaId 媒体 ID
+     */
+    void putNullValue(Long mediaId);
+
+    /**
+     * 尝试获取分布式锁（用于防止缓存击穿）
+     *
+     * @param mediaId 媒体 ID
+     * @param requestId 请求唯一标识（用于防止误释放其他线程的锁）
+     * @return 获取成功返回 true，失败返回 false
+     */
+    boolean tryLock(Long mediaId, String requestId);
+
+    /**
+     * 释放分布式锁（只有 requestId 匹配时才释放）
+     *
+     * @param mediaId 媒体 ID
+     * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
+     */
+    void unlock(Long mediaId, String requestId);
+
+    /**
+     * 续期分布式锁（延长锁的过期时间，只有 requestId 匹配时才续期）
+     *
+     * @param mediaId 媒体 ID
+     * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
+     * @return 续期成功返回 true，失败返回 false
+     */
+    boolean renewLock(Long mediaId, String requestId);
 }
