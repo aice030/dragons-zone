@@ -29,7 +29,7 @@
   "description": "描述",
   "storagePath": "images/2026/01/21/xxx.jpg",
   "coverPath": "images/2026/01/21/xxx.jpg",
-  "coverUrl": "https://...",  // 预签名URL（12分钟有效），仅用于缓存，不映射到数据库
+  "coverUrl": "https://...", 
   "state": 0,
   "updateTime": "2026-01-31T12:34:56",
   "likeCount": 0,
