@@ -32,6 +32,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +53,14 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final IMediaVisibleService mediaVisibleService;
     private final IUserService userService;
     private final MediaRedisCacheService mediaRedisCacheService;
+
+    // 延迟任务
+    private final ScheduledExecutorService delayDeleteExecutor =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "media-cache-delay-delete");
+                t.setDaemon(true);
+                return t;
+            });
 
     @Autowired
     public MediaServiceImpl(StorageService storageService,
@@ -195,40 +206,67 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
 
         // 下载/预览规则：
-        // - 游客/普通用户：仅允许 state=0（已审核通过）
+        // - 游客/普通用户：仅允许 state=0（已审核通过），不允许普通用户查看和下载 state!=0 的 media
         // - 上传者本人：允许 state=0/6/7（用于自查与修改）
         // - 审核者（作者/管理员）：允许 state=0/6/7（用于审核预览）
         byte state = media.getState();
         if (state == 4 || state == 5) {
-            log.warn("getDownloadUrl denied mediaId={} currentUserId={} reason=deleted_or_deleting", mediaId, currentUserId);
+            log.warn("getDownloadUrl denied, media was deleted, mediaId={} currentUserId={} reason=deleted_or_deleting", mediaId, currentUserId);
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
+        // 如果media状态不是公开状态（state=0），就要验证当前用户是否有资格查看并下载当前media
         if (state != 0) {
+            // 验证是否为上传者
             boolean isOwner = currentUserId != null
                     && media.getUploaderId() != null
                     && media.getUploaderId().equals(currentUserId);
             boolean isAuditor = false;
+            // 验证是否为管理员
             if (currentUserId != null) {
                 try {
                     validateAuditorPermission(currentUserId);
                     isAuditor = true;
                 } catch (BusinessException ignored) {
+                    log.error("getDownloadUrl failed, validate auditor permission failed");
                 }
             }
+            // 对于 state != 0 的media，只有 media 的上传者或系统管理员可以下载
             if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
-                log.warn("getDownloadUrl denied mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
+                log.warn("getDownloadUrl denied, no permission to access, mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
                 throw new BusinessException(ResponseCode.NOT_FOUND);
             }
         }
 
         // 2. 检查对象存储中文件是否实际存在（防止缓存不一致导致的问题）
         if (!storageService.exists(media.getStoragePath())) {
-            log.warn("getDownloadUrl denied mediaId={} reason=storage_file_not_exists path={}", mediaId, media.getStoragePath());
+            log.warn("getDownloadUrl denied, resource doesn't exist, mediaId={} reason=storage_file_not_exists path={}", mediaId, media.getStoragePath());
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
-        // 3. 生成预签名URL（2小时有效，7200秒）
-        return storageService.getPresignedUrl(media.getStoragePath(), 7200);
+        // 3. 权限验证通过且对象存储文件存在后，返回下载链接。仅 state=0 走缓存
+        int ttlSeconds = 7200;
+        if (state == 0) {
+            String cached = mediaRedisCacheService.getDownloadUrl(media.getId());
+            if (cached != null) {
+                return cached;
+            }
+        }
+        try {
+            String presignedUrl = storageService.getPresignedUrl(media.getStoragePath(), ttlSeconds);
+            if (presignedUrl == null || presignedUrl.isEmpty()) {
+                log.warn("get blank download url from oss mediaId={}", media.getId());
+                throw new BusinessException(ResponseCode.NOT_FOUND);
+            }
+            if (state == 0) {
+                mediaRedisCacheService.putDownloadUrl(media.getId(), presignedUrl, ttlSeconds);
+            }
+            return presignedUrl;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("get download url failed mediaId={}", media.getId(), e);
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+        }
     }
 
     @Override
@@ -256,8 +294,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             // 如果不是上传者，检查是否是作者或管理员
             User currentUser = userService.getById(currentUserId);
             if (currentUser != null && currentUser.getLevel() != null) {
-                Byte level = currentUser.getLevel();
-                isAuthorOrAdmin = level == 0 || level == 1; // 0=作者，1=管理员
+                byte level = currentUser.getLevel();
+                // 0=作者，1=管理员
+                isAuthorOrAdmin = level == 0 || level == 1;
             }
         }
         if (!isOwner && !isAuthorOrAdmin) {
@@ -313,11 +352,26 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
 
-        // 第四步：物理删除 media 记录
-        this.removeById(mediaId);
-        // [Redis] 写时删除：媒体已删除，删除缓存
+        // 第四步：延迟双删
+        // 媒体成功删除后，删除对应的下载链接和媒体详情缓存
+        mediaRedisCacheService.evictDownloadUrl(mediaId);
         mediaRedisCacheService.evictMediaDetail(mediaId);
+
+        // 删除缓存后，物理删除 media 记录
+        this.removeById(mediaId);
         log.info("delete success mediaId={} userId={}", mediaId, currentUserId);
+
+        // 延迟 500ms 后再删一次缓存
+        final Long idToEvict = mediaId;
+        delayDeleteExecutor.schedule(() -> {
+            try {
+                mediaRedisCacheService.evictDownloadUrl(idToEvict);
+                mediaRedisCacheService.evictMediaDetail(idToEvict);
+                log.info("delay double delete cache success mediaId={}", idToEvict);
+            } catch (Exception e) {
+                log.warn("delay double delete cache failed mediaId={}", idToEvict, e);
+            }
+        }, 500, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -326,7 +380,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
-        // [Redis] 先查缓存，命中则直接返回。缓存中仅存储 state=0（已审核通过）的媒体，游客/任何人可查看
+        // 先查缓存，命中则直接返回。缓存中仅存储 state=0（已审核通过）的媒体，游客/任何人可查看
         MediaDetailResult cached = mediaRedisCacheService.getMediaDetail(mediaId);
         if (cached != null) {
             return cached;
@@ -356,7 +410,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 }
             }
             if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
-                log.warn("getMediaDetail denied mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
+                log.warn("getMediaDetail denied because media has not got approved mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
                 throw new BusinessException(ResponseCode.NOT_FOUND);
             }
         }
@@ -388,7 +442,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 media.getUploaderId(),
                 media.getUpdateTime()
         );
-        // [Redis] 仅 state=0（已审核通过）时写入缓存，供后续游客查询命中
+        // 仅 state=0（已审核通过）时写入缓存，供后续游客查询命中
         if (media.getState() != null && media.getState() == 0) {
             mediaRedisCacheService.putMediaDetail(mediaId, result);
         }
@@ -439,8 +493,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             log.error("update failed mediaId={} reason=db_update_failed", mediaId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
-        // [Redis] 写时删除：媒体信息变更，删除缓存
-        mediaRedisCacheService.evictMediaDetail(mediaId);
+        // 写时删除：媒体信息变更，删除缓存
+        try{
+            mediaRedisCacheService.evictMediaDetail(mediaId);
+            mediaRedisCacheService.evictDownloadUrl(mediaId);
+        }catch (Exception e){
+            log.error("update media cache failed mediaId={} reason={}", mediaId, e.getMessage());
+        }
         log.info("media update success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), null);
     }
@@ -512,8 +571,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         } catch (Exception ignored) {
             // ignore
         }
-        // [Redis] 写时删除：封面变更，删除缓存
-        mediaRedisCacheService.evictMediaDetail(mediaId);
+        // 写时删除：封面变更，删除缓存
+        try{
+            mediaRedisCacheService.evictMediaDetail(mediaId);
+            mediaRedisCacheService.evictDownloadUrl(mediaId);
+        }catch (Exception e) {
+            log.error("media cache update failed mediaId={}", mediaId);
+        }
         log.info("media cover update success mediaId={}", mediaId);
         return new CoverUpdateResult(mediaId, coverPath, coverUrl);
     }
@@ -599,8 +663,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
         }
-        // [Redis] 写时删除：可见范围变更或 state 2→0 修正，删除缓存
-        mediaRedisCacheService.evictMediaDetail(mediaId);
         log.info("media visible rebuild success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);
     }

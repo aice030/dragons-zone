@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -26,11 +25,14 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
 
     @Override
     public IMediaService.MediaDetailResult getMediaDetail(Long mediaId) {
+        // 参数校验
         if (mediaId == null) {
             return null;
         }
-        String key = KEY_PREFIX + mediaId;
+        // 生成缓存key
+        String key = MEDIA_DETAIL_KEY_PREFIX + mediaId;
         try {
+            // 根据缓存key查询缓存
             Object value = redisTemplate.opsForValue().get(key);
             if (value instanceof IMediaService.MediaDetailResult) {
                 log.info("media detail cache hit mediaId={}", mediaId);
@@ -47,9 +49,9 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
         if (mediaId == null || detail == null) {
             return;
         }
-        String key = KEY_PREFIX + mediaId;
+        String key = MEDIA_DETAIL_KEY_PREFIX + mediaId;
         try {
-            redisTemplate.opsForValue().set(key, detail, TTL_SECONDS, TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set(key, detail, MEDIA_DETAIL_TTL_SECONDS, TimeUnit.SECONDS);
             log.info("media detail cache put mediaId={}", mediaId);
         } catch (Exception e) {
             log.error("media detail cache put failed mediaId={} error={}", mediaId, e.getMessage());
@@ -61,7 +63,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
         if (mediaId == null) {
             return;
         }
-        String key = KEY_PREFIX + mediaId;
+        String key = MEDIA_DETAIL_KEY_PREFIX + mediaId;
         try {
             redisTemplate.delete(key);
             log.info("media detail cache evict mediaId={}", mediaId);
@@ -71,21 +73,52 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public void evictBatchMediaDetail(List<Long> mediaIds) {
-        if (mediaIds == null || mediaIds.isEmpty()) {
-            return;
+    public String getDownloadUrl(Long mediaId) {
+        if (mediaId == null) {
+            return null;
         }
+        String key = DOWNLOAD_URL_KEY_PREFIX + mediaId;
         try {
-            List<String> keys = mediaIds.stream()
-                    .filter(id -> id != null)
-                    .map(id -> KEY_PREFIX + id)
-                    .toList();
-            if (!keys.isEmpty()) {
-                redisTemplate.delete(keys);
-                log.info("media detail cache evict batch count={} mediaIds={}", keys.size(), mediaIds);
+            String value = (String) redisTemplate.opsForValue().get(key);
+            if (value != null) {
+                log.info("downloadUrl cache hit mediaId={}", mediaId);
+                return value;
             }
         } catch (Exception e) {
-            log.error("media detail cache evict batch failed mediaIds={} error={}", mediaIds, e.getMessage());
+            log.error("downloadUrl cache get failed mediaId={} error={}", mediaId, e.getMessage());
+        }
+        return null;
+    }
+
+    @Override
+    public void putDownloadUrl(Long mediaId, String downloadUrl, int ttlSeconds) {
+        if (mediaId == null || downloadUrl == null || downloadUrl.isEmpty()) {
+            return;
+        }
+        if (ttlSeconds <= 5) {
+            return;
+        }
+        int ttl = Math.max(ttlSeconds - 60, 5);
+        String key = DOWNLOAD_URL_KEY_PREFIX + mediaId;
+        try {
+            redisTemplate.opsForValue().set(key, downloadUrl, ttl, TimeUnit.SECONDS);
+            log.info("downloadUrl cache put mediaId={}", mediaId);
+        } catch (Exception e) {
+            log.error("downloadUrl cache put failed mediaId={} error={}", mediaId, e.getMessage());
+        }
+    }
+
+    @Override
+    public void evictDownloadUrl(Long mediaId) {
+        if (mediaId == null) {
+            return;
+        }
+        String key = DOWNLOAD_URL_KEY_PREFIX + mediaId;
+        try {
+            redisTemplate.delete(key);
+            log.info("downloadUrl cache evict mediaId={}", mediaId);
+        } catch (Exception e) {
+            log.error("downloadUrl cache evict failed mediaId={} error={}", mediaId, e.getMessage());
         }
     }
 }

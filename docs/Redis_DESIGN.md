@@ -7,6 +7,7 @@
 #### 描述
 缓存媒体资源的详细信息，包括标题、描述、存储路径、封面等信息。
 采用**二级缓存架构**：
+- **设计理由**：媒体资源详细信息查询请求远多于修改，使用二级缓存能大大缓解redis和mysql压力，扬长避短
 - **一级缓存（Redis）**：分布式缓存，存储序列化后的完整数据
 - **二级缓存（Caffeine）**：本地缓存，减少Redis访问压力，提升响应速度
 先查Caffeine本地缓存，未命中再查Redis，都未命中则查数据库。
@@ -62,5 +63,30 @@ JSON序列化的 `MediaDetailResult` 对象，包含以下字段：
 
 **说明**：`MediaDetailResult` 需添加 `@JsonCreator`、`@JsonProperty` 以支持 Jackson 反序列化。
 
+### 缓存media临时下载链接
+
+#### 描述
+缓存媒体资源的临时下载链接，无需每次都访问 OSS 获取。仅对 **state=0（已审核通过、公开）** 的媒体缓存；state=6/7 不缓存，每次请求在权限校验通过后直接向 OSS 获取临时链接。
+先查 Redis 缓存，未命中则调用 StorageService 从 OSS 获取临时下载链接并写入缓存。
+
+#### 缓存Key
+- **Redis Key格式**：`media:downloadUrl:{mediaId}`
+  - 示例：`media:downloadUrl:1`
+
+#### 缓存Value
+- **Redis Value格式**：字符串 String，临时下载链接
+
+#### 过期时间
+- **Redis TTL**：OSS 临时下载链接的过期时间 - 60 秒（示例：OSS 过期 7200 秒时，缓存 TTL=7140 秒）
+  - 缓存早过期 60 秒，避免网络波动导致链接已过期但缓存仍在
+
+#### 缓存更新策略
+- **写时删除（Write-Through）**：当媒体信息发生变更时（更新、删除、审核），主动删除对应的缓存
+- **删除操作**：删除 Redis 中该 key。实现时在调用 evictMediaDetail(mediaId) 的同一处同时调用 evictDownloadUrl(mediaId)
+
+
+### 缓存media列表（仅缓存media_id）
+
+### 缓存穿透预防/解决方案
 
 ## 排行榜

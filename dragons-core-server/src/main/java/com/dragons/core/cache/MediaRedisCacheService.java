@@ -19,14 +19,19 @@ import java.util.List;
 public interface MediaRedisCacheService {
 
     /**
-     * 缓存 Key 前缀
+     * 媒体资源详情缓存 Key 前缀
      */
-    String KEY_PREFIX = "media:detail:";
+    String MEDIA_DETAIL_KEY_PREFIX = "media:detail:";
 
     /**
-     * 缓存 TTL（秒）
+     * 下载链接缓存 Key 前缀
      */
-    int TTL_SECONDS = 600;
+    String DOWNLOAD_URL_KEY_PREFIX = "media:downloadUrl:";
+
+    /**
+     * 媒体资源缓存 TTL（秒）
+     */
+    int MEDIA_DETAIL_TTL_SECONDS = 600;
 
     /**
      * 从缓存获取媒体详情
@@ -37,7 +42,7 @@ public interface MediaRedisCacheService {
     IMediaService.MediaDetailResult getMediaDetail(Long mediaId);
 
     /**
-     * 写入缓存
+     * 将媒体详情写入缓存
      *
      * @param mediaId 媒体 ID
      * @param detail  媒体详情
@@ -45,16 +50,33 @@ public interface MediaRedisCacheService {
     void putMediaDetail(Long mediaId, IMediaService.MediaDetailResult detail);
 
     /**
-     * 删除缓存（单个）
+     * 删除媒体详情缓存
      *
      * @param mediaId 媒体 ID
      */
     void evictMediaDetail(Long mediaId);
 
     /**
-     * 批量删除缓存
+     * 从缓存获取下载链接（仅 state=0 会写入缓存，调用方仅在 state=0 时调用）
      *
-     * @param mediaIds 媒体 ID 列表
+     * @param mediaId 媒体 ID
+     * @return 命中返回 URL，未命中返回 null
      */
-    void evictBatchMediaDetail(List<Long> mediaIds);
+    String getDownloadUrl(Long mediaId);
+
+    /**
+     * 将下载链接写入缓存（仅对 state=0 的媒体调用）
+     *
+     * @param mediaId     媒体 ID
+     * @param downloadUrl 临时下载链接
+     * @param ttlSeconds  下载链接剩余有效时间（秒），用于计算缓存 TTL = ttlSeconds - 60
+     */
+    void putDownloadUrl(Long mediaId, String downloadUrl, int ttlSeconds);
+
+    /**
+     * 删除下载链接缓存
+     *
+     * @param mediaId 媒体 ID
+     */
+    void evictDownloadUrl(Long mediaId);
 }
