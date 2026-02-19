@@ -219,17 +219,29 @@
 
 ## 媒体缓存设计
 
+### 缓存方案：media:core 单一数据源
+- **缓存 Key**：`media:core:{mediaId}`
+- **缓存内容**：`Media` 实体完整字段（包括 `coverUrl` 预签名URL，12分钟有效）
+- **TTL**：600秒（10分钟）
+- **设计理念**：作为单一数据源，供 `MediaDetailResult`、`MediaListItem`、`UploadResult` 等不同返回结构选择性填充使用
+
 ### 设计理念：为何只缓存 state=0
-- **媒体详情缓存**、**下载链接缓存** 仅缓存 state=0（已审核通过、公开）的媒体。
-- **原因**：state=0 对所有人可见，单 key 即可；state=6/7 仅上传者或审核者可访问，若按 mediaId 单 key 缓存会越权（A 请求写入后 B 命中则拿到本不该见的链接），故不缓存，每次校验权限后直接向 OSS 取链接。
-- **结果**：详情可先查缓存、命中即返；下载链接需先查 DB 拿 state、做权限校验后，仅 state=0 时查/写缓存。
+- **media:core 缓存**仅缓存 state=0（已审核通过、公开）的媒体。
+- **原因**：state=0 对所有人可见，单 key 即可；state=6/7 仅上传者或审核者可访问，若按 mediaId 单 key 缓存会越权，故不缓存，每次校验权限后直接查 DB。
+
+### coverUrl 处理
+- **写入缓存时**：动态生成预签名URL（12分钟有效），设置到 `Media.coverUrl` 字段
+- **读取缓存时**：优先使用缓存中的 `coverUrl`，不存在则重新生成
 
 ### 使用缓存的方法
-- **读**：`getMediaDetail`（先查 Redis，命中即返）；`getDownloadUrl`（仅 state=0 时查 Redis，未命中再向 OSS 取并回写）。
-- **写**：`getMediaDetail` 未命中且 state=0 时 `putMediaDetail`；`getDownloadUrl` 未命中且 state=0 时 `putDownloadUrl`。
-- **删（写时删除）**：`update`、`updateCover`、`delete`、`approveMedia`、`rejectMedia` 在变更后调用 `evictMediaDetail` + `evictDownloadUrl`；`rebuildVisible` 只改可见性不改 media 核心字段，不删缓存。
+- **读**：`getMediaDetail` 先查 `media:core`，命中则从 `Media` 转换为 `MediaDetailResult`；未命中查 DB，仅 state=0 时写入缓存
+- **删（写时删除）**：`update`、`updateCover`、`delete`、`approveMedia`、`rejectMedia` 在变更后调用 `evictMediaCore`；`rebuildVisible` 不删缓存
 
 ### 延迟双删
-- **使用位置**：`delete` 方法。流程：第一次删缓存 → `removeById` 物理删 media → 延迟 500ms 后再删一次缓存（`ScheduledExecutorService.schedule`）。
-- **目的**：避免“删库后、删缓存前”并发请求读 DB 并回写缓存；延迟后再删一次清理该时间窗内可能被回写的脏缓存。
-- **实现**：单例 `ScheduledExecutorService`（线程名 media-cache-delay-delete），延迟任务内 try-catch 仅打日志，不抛异常。
+- **使用位置**：`delete` 方法。流程：第一次删缓存 → 物理删 media → 延迟 500ms 后再删一次缓存。
+- **目的**：避免“删库后、删缓存前”并发请求读 DB 并回写缓存。
+
+### 缓存删除失败不回滚数据库
+- **设计原则**：数据库是主数据源，缓存失败不应影响数据库事务。
+- **实现方式**：所有缓存删除操作用 try-catch 包裹，失败只记录日志，不抛出异常。
+- **原因**：避免级联故障（Redis 故障不应导致业务失败），接受最终一致性（缓存 TTL 10分钟）。

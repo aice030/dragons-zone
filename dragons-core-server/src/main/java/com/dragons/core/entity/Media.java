@@ -92,4 +92,11 @@ public class Media implements Serializable {
      */
     @TableField("like_count_update_time")
     private LocalDateTime likeCountUpdateTime;
+
+    /**
+     * 封面预签名URL（2小时有效），仅用于缓存，不映射到数据库
+     * 在写入缓存时动态生成，查询时直接使用
+     */
+    @TableField(exist = false)
+    private String coverUrl;
 }

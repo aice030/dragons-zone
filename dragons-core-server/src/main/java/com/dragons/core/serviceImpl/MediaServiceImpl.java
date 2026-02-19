@@ -54,6 +54,12 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final IUserService userService;
     private final MediaRedisCacheService mediaRedisCacheService;
 
+    /**
+     * 封面预签名URL有效期（秒）
+     * 设置为12分钟（720秒），覆盖缓存TTL（10分钟）并额外2分钟应对网络波动
+     */
+    private static final int COVER_URL_TTL_SECONDS = 720;
+
     // 延迟任务
     private final ScheduledExecutorService delayDeleteExecutor =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -243,22 +249,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
 
-        // 3. 权限验证通过且对象存储文件存在后，返回下载链接。仅 state=0 走缓存
-        int ttlSeconds = 7200;
-        if (state == 0) {
-            String cached = mediaRedisCacheService.getDownloadUrl(media.getId());
-            if (cached != null) {
-                return cached;
-            }
-        }
+        // 3. 权限验证通过且对象存储文件存在后，直接生成预签名URL并返回
+        int ttlSeconds = 300; // 5分钟有效期
         try {
             String presignedUrl = storageService.getPresignedUrl(media.getStoragePath(), ttlSeconds);
             if (presignedUrl == null || presignedUrl.isEmpty()) {
                 log.warn("get blank download url from oss mediaId={}", media.getId());
                 throw new BusinessException(ResponseCode.NOT_FOUND);
-            }
-            if (state == 0) {
-                mediaRedisCacheService.putDownloadUrl(media.getId(), presignedUrl, ttlSeconds);
             }
             return presignedUrl;
         } catch (BusinessException e) {
@@ -353,9 +350,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
 
         // 第四步：延迟双删
-        // 媒体成功删除后，删除对应的下载链接和媒体详情缓存
-        mediaRedisCacheService.evictDownloadUrl(mediaId);
-        mediaRedisCacheService.evictMediaDetail(mediaId);
+        // 媒体成功删除后，删除媒体核心数据缓存
+        mediaRedisCacheService.evictMediaCore(mediaId);
 
         // 删除缓存后，物理删除 media 记录
         this.removeById(mediaId);
@@ -365,8 +361,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         final Long idToEvict = mediaId;
         delayDeleteExecutor.schedule(() -> {
             try {
-                mediaRedisCacheService.evictDownloadUrl(idToEvict);
-                mediaRedisCacheService.evictMediaDetail(idToEvict);
+                mediaRedisCacheService.evictMediaCore(idToEvict);
                 log.info("delay double delete cache success mediaId={}", idToEvict);
             } catch (Exception e) {
                 log.warn("delay double delete cache failed mediaId={}", idToEvict, e);
@@ -380,10 +375,34 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
-        // 先查缓存，命中则直接返回。缓存中仅存储 state=0（已审核通过）的媒体，游客/任何人可查看
-        MediaDetailResult cached = mediaRedisCacheService.getMediaDetail(mediaId);
-        if (cached != null) {
-            return cached;
+        // 先查缓存，命中则从 Media 实体转换为 MediaDetailResult
+        Media cachedMedia = mediaRedisCacheService.getMediaCore(mediaId);
+        if (cachedMedia != null) {
+            // 缓存中仅存储 state=0（已审核通过）的媒体，游客/任何人可查看
+            // 直接使用缓存中的 coverUrl（如果存在），否则重新生成
+            String coverUrl = cachedMedia.getCoverUrl();
+            if (coverUrl == null || coverUrl.trim().isEmpty()) {
+                String coverPath = cachedMedia.getCoverPath();
+                if (coverPath != null && !coverPath.trim().isEmpty()) {
+                    try {
+                        if (storageService.exists(coverPath)) {
+                            coverUrl = storageService.getPresignedUrl(coverPath, COVER_URL_TTL_SECONDS);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            return new MediaDetailResult(
+                    cachedMedia.getId(),
+                    cachedMedia.getCategory(),
+                    cachedMedia.getTitle(),
+                    cachedMedia.getDescription(),
+                    cachedMedia.getStoragePath(),
+                    cachedMedia.getCoverPath(),
+                    coverUrl,
+                    cachedMedia.getUploaderId(),
+                    cachedMedia.getUpdateTime()
+            );
         }
 
         Media media = this.getById(mediaId);
@@ -419,13 +438,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // “专区”只用于前端筛选展示，不用于做权限控制。
         // 因此详情不做专区校验：只要资源存在且 state=0，就允许查看详情。
 
-        // 为封面生成预签名URL（2小时有效），便于前端详情页/弹窗直接展示
+        // 为封面生成预签名URL（12分钟有效），便于前端详情页/弹窗直接展示
         String coverUrl = null;
         String coverPath = media.getCoverPath();
         if (coverPath != null && !coverPath.trim().isEmpty()) {
             try {
                 if (storageService.exists(coverPath)) {
-                    coverUrl = storageService.getPresignedUrl(coverPath, 7200);
+                    coverUrl = storageService.getPresignedUrl(coverPath, COVER_URL_TTL_SECONDS);
                 }
             } catch (Exception ignored) {
             }
@@ -443,8 +462,10 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 media.getUpdateTime()
         );
         // 仅 state=0（已审核通过）时写入缓存，供后续游客查询命中
+        // 将 coverUrl 设置到 Media 对象中，一起缓存
         if (media.getState() != null && media.getState() == 0) {
-            mediaRedisCacheService.putMediaDetail(mediaId, result);
+            media.setCoverUrl(coverUrl);
+            mediaRedisCacheService.putMediaCore(mediaId, media);
         }
         return result;
     }
@@ -495,8 +516,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
         // 写时删除：媒体信息变更，删除缓存
         try{
-            mediaRedisCacheService.evictMediaDetail(mediaId);
-            mediaRedisCacheService.evictDownloadUrl(mediaId);
+            mediaRedisCacheService.evictMediaCore(mediaId);
         }catch (Exception e){
             log.error("update media cache failed mediaId={} reason={}", mediaId, e.getMessage());
         }
@@ -566,15 +586,14 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         String coverUrl = null;
         try {
             if (storageService.exists(coverPath)) {
-                coverUrl = storageService.getPresignedUrl(coverPath, 7200);
+                coverUrl = storageService.getPresignedUrl(coverPath, COVER_URL_TTL_SECONDS);
             }
         } catch (Exception ignored) {
             // ignore
         }
         // 写时删除：封面变更，删除缓存
         try{
-            mediaRedisCacheService.evictMediaDetail(mediaId);
-            mediaRedisCacheService.evictDownloadUrl(mediaId);
+            mediaRedisCacheService.evictMediaCore(mediaId);
         }catch (Exception e) {
             log.error("media cache update failed mediaId={}", mediaId);
         }
@@ -1024,8 +1043,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // 审核通过会改变 state，删除该媒体缓存
                 // 目前业务无需删除缓存，保留是为应对后续可能出现的state=0的资源被打回重审
                 try{
-                    mediaRedisCacheService.evictMediaDetail(media.getId());
-                    mediaRedisCacheService.evictDownloadUrl(media.getId());
+                    mediaRedisCacheService.evictMediaCore(media.getId());
                 }catch (Exception e){
                     log.warn("after approve media cache delete failed error={}", e.getMessage());
                 }
@@ -1083,8 +1101,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // 审核驳回会改变 state，删除该媒体缓存
                 // 目前业务无需删除缓存，保留是为应对后续可能出现的state=0的资源被打回重审
                 try{
-                    mediaRedisCacheService.evictMediaDetail(media.getId());
-                    mediaRedisCacheService.evictDownloadUrl(media.getId());
+                    mediaRedisCacheService.evictMediaCore(media.getId());
                 }catch (Exception e){
                     log.warn("after reject media cache delete failed error={}", e.getMessage());
                 }
@@ -1139,7 +1156,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 if (coverPath != null && !coverPath.trim().isEmpty()) {
                     try {
                         if (storageService.exists(coverPath)) {
-                            coverUrl = storageService.getPresignedUrl(coverPath, 7200);
+                            coverUrl = storageService.getPresignedUrl(coverPath, COVER_URL_TTL_SECONDS);
                         }
                     } catch (Exception ignored) {
                     }
