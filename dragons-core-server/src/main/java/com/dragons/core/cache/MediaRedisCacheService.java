@@ -1,6 +1,10 @@
 package com.dragons.core.cache;
 
+import com.dragons.core.dto.MediaListCacheValue;
 import com.dragons.core.entity.Media;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 媒体核心数据 Redis 缓存服务
@@ -28,6 +32,21 @@ public interface MediaRedisCacheService {
     int MEDIA_CORE_TTL_SECONDS = 600;
 
     /**
+     * 媒体列表缓存 Key 前缀
+     */
+    String MEDIA_LIST_KEY_PREFIX = "media:list:";
+
+    /**
+     * 我的上传列表缓存 Key 前缀
+     */
+    String MEDIA_MY_KEY_PREFIX = "media:my:";
+
+    /**
+     * 媒体列表缓存 TTL（秒）
+     */
+    int MEDIA_LIST_TTL_SECONDS = 300;
+
+    /**
      * 从缓存获取媒体核心数据
      *
      * @param mediaId 媒体 ID
@@ -49,4 +68,74 @@ public interface MediaRedisCacheService {
      * @param mediaId 媒体 ID
      */
     void evictMediaCore(Long mediaId);
+
+    /**
+     * 批量获取媒体核心数据
+     *
+     * @param mediaIds 媒体 ID 列表
+     * @return mediaId -> Media 的映射，未命中的ID不在返回结果中
+     */
+    Map<Long, Media> batchGetMediaCore(List<Long> mediaIds);
+
+    /**
+     * 从缓存获取媒体列表（包含total和mediaIds）
+     *
+     * @param zoneUserId 专区ID：0=公共区，其他=成员专区ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @return 命中返回包含total和mediaIds的缓存值，未命中返回 null
+     */
+    MediaListCacheValue getMediaList(Long zoneUserId, Byte category, Integer page, Integer size);
+
+    /**
+     * 将媒体列表（包含total和mediaIds）写入缓存
+     *
+     * @param zoneUserId 专区ID：0=公共区，其他=成员专区ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param total 列表总数
+     * @param mediaIds 媒体ID列表
+     */
+    void putMediaList(Long zoneUserId, Byte category, Integer page, Integer size, Long total, List<Long> mediaIds);
+
+    /**
+     * 删除媒体列表缓存（删除指定 zoneUserId 和 category 的所有分页缓存）
+     *
+     * @param zoneUserId 专区ID：0=公共区，其他=成员专区ID
+     * @param category 分类：null=all，0=图片，1=视频
+     */
+    void evictMediaList(Long zoneUserId, Byte category);
+
+    /**
+     * 从缓存获取我的上传列表（包含total和mediaIds）
+     *
+     * @param uploaderId 上传者用户ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @return 命中返回包含total和mediaIds的缓存值，未命中返回 null
+     */
+    MediaListCacheValue getMyUploadList(Long uploaderId, Byte category, Integer page, Integer size);
+
+    /**
+     * 将我的上传列表（包含total和mediaIds）写入缓存
+     *
+     * @param uploaderId 上传者用户ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param total 列表总数
+     * @param mediaIds 媒体ID列表
+     */
+    void putMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, Long total, List<Long> mediaIds);
+
+    /**
+     * 删除我的上传列表缓存（删除指定 uploaderId 和 category 的所有分页缓存）
+     *
+     * @param uploaderId 上传者用户ID
+     * @param category 分类：null=all，0=图片，1=视频
+     */
+    void evictMyUploadList(Long uploaderId, Byte category);
 }

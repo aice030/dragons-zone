@@ -1,11 +1,14 @@
 package com.dragons.core.cache;
 
+import com.dragons.core.dto.MediaListCacheValue;
 import com.dragons.core.entity.Media;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * 媒体核心数据 Redis 缓存服务实现
@@ -69,6 +72,190 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
             log.info("media core cache evict mediaId={}", mediaId);
         } catch (Exception e) {
             log.error("media core cache evict failed mediaId={} error={}", mediaId, e.getMessage());
+        }
+    }
+
+    @Override
+    public Map<Long, Media> batchGetMediaCore(List<Long> mediaIds) {
+        if (mediaIds == null || mediaIds.isEmpty()) {
+            return new HashMap<>();
+        }
+        Map<Long, Media> result = new HashMap<>();
+        for (Long mediaId : mediaIds) {
+            if (mediaId == null) {
+                continue;
+            }
+            Media media = getMediaCore(mediaId);
+            if (media != null) {
+                result.put(mediaId, media);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 将 category 转换为缓存 key 中的字符串
+     * null -> "all", 0 -> "0", 1 -> "1"
+     */
+    private String categoryToString(Byte category) {
+        return category == null ? "all" : String.valueOf(category);
+    }
+
+    /**
+     * 构建媒体列表缓存 key
+     * 格式：media:list:{zoneUserId}:{category}:{page}:{size}
+     */
+    private String buildMediaListKey(Long zoneUserId, Byte category, Integer page, Integer size) {
+        long safeZoneUserId = zoneUserId == null ? 0L : zoneUserId;
+        String categoryStr = categoryToString(category);
+        int safePage = page == null || page < 1 ? 1 : page;
+        int safeSize = size == null || size < 1 ? 10 : size;
+        return MEDIA_LIST_KEY_PREFIX + safeZoneUserId + ":" + categoryStr + ":" + safePage + ":" + safeSize;
+    }
+
+    /**
+     * 构建媒体列表缓存 key 模式（用于批量删除）
+     * 格式：media:list:{zoneUserId}:{category}:*
+     */
+    private String buildMediaListKeyPattern(Long zoneUserId, Byte category) {
+        long safeZoneUserId = zoneUserId == null ? 0L : zoneUserId;
+        String categoryStr = categoryToString(category);
+        return MEDIA_LIST_KEY_PREFIX + safeZoneUserId + ":" + categoryStr + ":*";
+    }
+
+    @Override
+    public MediaListCacheValue getMediaList(Long zoneUserId, Byte category, Integer page, Integer size) {
+        String key = buildMediaListKey(zoneUserId, category, page, size);
+        try {
+            Object value = redisTemplate.opsForValue().get(key);
+            if (value instanceof MediaListCacheValue) {
+                MediaListCacheValue cacheValue = (MediaListCacheValue) value;
+                log.info("media list cache hit zoneUserId={} category={} page={} size={} total={} count={}", 
+                        zoneUserId, category, page, size, cacheValue.getTotal(), 
+                        cacheValue.getMediaIds() != null ? cacheValue.getMediaIds().size() : 0);
+                return cacheValue;
+            }
+        } catch (Exception e) {
+            log.error("media list cache get failed zoneUserId={} category={} page={} size={} error={}", 
+                    zoneUserId, category, page, size, e.getMessage());
+        }
+        return null;
+    }
+
+    @Override
+    public void putMediaList(Long zoneUserId, Byte category, Integer page, Integer size, Long total, List<Long> mediaIds) {
+        if (mediaIds == null || total == null) {
+            return;
+        }
+        String key = buildMediaListKey(zoneUserId, category, page, size);
+        try {
+            MediaListCacheValue cacheValue = new MediaListCacheValue(total, mediaIds);
+            redisTemplate.opsForValue().set(key, cacheValue, MEDIA_LIST_TTL_SECONDS, TimeUnit.SECONDS);
+            log.info("media list cache put zoneUserId={} category={} page={} size={} total={} count={}", 
+                    zoneUserId, category, page, size, total, mediaIds.size());
+        } catch (Exception e) {
+            log.error("media list cache put failed zoneUserId={} category={} page={} size={} error={}", 
+                    zoneUserId, category, page, size, e.getMessage());
+        }
+    }
+
+    @Override
+    public void evictMediaList(Long zoneUserId, Byte category) {
+        String pattern = buildMediaListKeyPattern(zoneUserId, category);
+        try {
+            Set<String> keys = redisTemplate.keys(pattern);
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+                log.info("media list cache evict zoneUserId={} category={} deletedKeys={}", 
+                        zoneUserId, category, keys.size());
+            }
+        } catch (Exception e) {
+            log.error("media list cache evict failed zoneUserId={} category={} error={}", 
+                    zoneUserId, category, e.getMessage());
+        }
+    }
+
+    /**
+     * 构建我的上传列表缓存 key
+     * 格式：media:my:{uploaderId}:{category}:{page}:{size}
+     */
+    private String buildMyUploadListKey(Long uploaderId, Byte category, Integer page, Integer size) {
+        if (uploaderId == null) {
+            throw new IllegalArgumentException("uploaderId cannot be null");
+        }
+        String categoryStr = categoryToString(category);
+        int safePage = page == null || page < 1 ? 1 : page;
+        int safeSize = size == null || size < 1 ? 10 : size;
+        return MEDIA_MY_KEY_PREFIX + uploaderId + ":" + categoryStr + ":" + safePage + ":" + safeSize;
+    }
+
+    /**
+     * 构建我的上传列表缓存 key 模式（用于批量删除）
+     * 格式：media:my:{uploaderId}:{category}:*
+     */
+    private String buildMyUploadListKeyPattern(Long uploaderId, Byte category) {
+        if (uploaderId == null) {
+            throw new IllegalArgumentException("uploaderId cannot be null");
+        }
+        String categoryStr = categoryToString(category);
+        return MEDIA_MY_KEY_PREFIX + uploaderId + ":" + categoryStr + ":*";
+    }
+
+    @Override
+    public MediaListCacheValue getMyUploadList(Long uploaderId, Byte category, Integer page, Integer size) {
+        if (uploaderId == null) {
+            return null;
+        }
+        String key = buildMyUploadListKey(uploaderId, category, page, size);
+        try {
+            Object value = redisTemplate.opsForValue().get(key);
+            if (value instanceof MediaListCacheValue) {
+                MediaListCacheValue cacheValue = (MediaListCacheValue) value;
+                log.info("my upload list cache hit uploaderId={} category={} page={} size={} total={} count={}", 
+                        uploaderId, category, page, size, cacheValue.getTotal(),
+                        cacheValue.getMediaIds() != null ? cacheValue.getMediaIds().size() : 0);
+                return cacheValue;
+            }
+        } catch (Exception e) {
+            log.error("my upload list cache get failed uploaderId={} category={} page={} size={} error={}", 
+                    uploaderId, category, page, size, e.getMessage());
+        }
+        return null;
+    }
+
+    @Override
+    public void putMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, Long total, List<Long> mediaIds) {
+        if (uploaderId == null || mediaIds == null || total == null) {
+            return;
+        }
+        String key = buildMyUploadListKey(uploaderId, category, page, size);
+        try {
+            MediaListCacheValue cacheValue = new MediaListCacheValue(total, mediaIds);
+            redisTemplate.opsForValue().set(key, cacheValue, MEDIA_LIST_TTL_SECONDS, TimeUnit.SECONDS);
+            log.info("my upload list cache put uploaderId={} category={} page={} size={} total={} count={}", 
+                    uploaderId, category, page, size, total, mediaIds.size());
+        } catch (Exception e) {
+            log.error("my upload list cache put failed uploaderId={} category={} page={} size={} error={}", 
+                    uploaderId, category, page, size, e.getMessage());
+        }
+    }
+
+    @Override
+    public void evictMyUploadList(Long uploaderId, Byte category) {
+        if (uploaderId == null) {
+            return;
+        }
+        String pattern = buildMyUploadListKeyPattern(uploaderId, category);
+        try {
+            Set<String> keys = redisTemplate.keys(pattern);
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+                log.info("my upload list cache evict uploaderId={} category={} deletedKeys={}", 
+                        uploaderId, category, keys.size());
+            }
+        } catch (Exception e) {
+            log.error("my upload list cache evict failed uploaderId={} category={} error={}", 
+                    uploaderId, category, e.getMessage());
         }
     }
 }

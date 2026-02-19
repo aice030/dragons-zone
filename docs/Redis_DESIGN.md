@@ -80,8 +80,59 @@
 **说明**：下载链接（`getDownloadUrl`）不进行缓存，因为生成预签名URL是纯本地计算（HMAC-SHA256签名），CPU占用很小，对于QPS < 1000的项目无需缓存。每次请求直接调用 `StorageService.getPresignedUrl()` 生成即可。
 
 ### 缓存media列表（仅缓存media_id）
-#### media展示列表
-#### 用户管理media列表
+
+#### 描述
+缓存媒体列表的ID集合，复用 `media:core` 缓存填充列表项。采用**ID列表缓存 + 核心数据缓存**的二级结构：
+- **ID列表缓存**：存储符合条件的媒体ID列表（分页结果）
+- **核心数据缓存**：复用 `media:core`，通过ID批量获取完整数据
+查询时先查ID列表，再批量从 `media:core` 获取数据填充返回结构。
+
+#### 缓存Key
+
+**media展示列表**
+- **Redis Key格式**：`media:list:{zoneUserId}:{category}:{page}:{size}`
+  - `zoneUserId`：0=公共区，其他=成员专区ID
+  - `category`：`all`=全部，`0`=图片，`1`=视频（null 映射为 `all`）
+  - 示例：`media:list:0:all:1:20`（公共区全部类型第1页）、`media:list:0:0:1:20`（公共区图片第1页）
+
+**用户管理media列表**
+- **Redis Key格式**：`media:my:{uploaderId}:{category}:{page}:{size}`
+  - `uploaderId`：上传者用户ID
+  - `category`：`all`=全部，`0`=图片，`1`=视频（null 映射为 `all`）
+  - 示例：`media:my:1:all:1:20`（用户1的全部类型第1页）、`media:my:1:0:1:20`（用户1的图片第1页）
+
+#### 缓存Value
+包含列表总数和媒体ID列表的结构，序列化为JSON对象：
+```json
+{
+  "total": 100,
+  "mediaIds": [1, 2, 3, 4, 5]
+}
+```
+
+#### 过期时间
+- **Redis TTL**：300秒（5分钟）
+
+#### 缓存更新策略
+- **写时删除（Write-Through）**：媒体状态变更时，删除相关列表缓存
+- **删除范围**：根据变更媒体所属的 `zoneUserId` 和 `category`，删除对应的列表缓存
+- **更新操作**：先删除缓存，再更新数据库，下次查询时重新加载
+
+#### 实现说明
+
+**media展示列表（listMedia）**
+- 先查 Redis ID列表 → 命中则批量从 `media:core` 获取数据，填充 `MediaListItem` 返回
+- 未命中则查 DB，仅 `state=0` 的媒体写入ID列表缓存
+- 批量获取 `media:core` 时，未命中的ID从DB加载并写入缓存
+
+**用户管理media列表（listMyUpload）**
+- 先查 Redis ID列表 → 命中则批量从 `media:core` 获取数据，填充 `MyUploadListItem` 返回
+- 未命中则查 DB，排除 `state=5` 的媒体写入ID列表缓存
+- 批量获取 `media:core` 时，未命中的ID从DB加载并写入缓存
+
+**缓存失效**
+- 上传：删除对应 `zoneUserId` 和 `category` 的列表缓存
+- 更新/删除/审核：删除相关列表缓存（根据媒体所属专区）
 
 ### 缓存穿透预防/解决方案
 
