@@ -34,7 +34,7 @@ public interface MediaRedisCacheService {
      * @param mediaId 媒体 ID
      * @return 命中返回 MediaDetailResult，未命中返回 null
      */
-    IMediaService.MediaDetailResult get(Long mediaId);
+    IMediaService.MediaDetailResult getMediaDetail(Long mediaId);
 
     /**
      * 写入缓存
@@ -42,19 +42,19 @@ public interface MediaRedisCacheService {
      * @param mediaId 媒体 ID
      * @param detail  媒体详情
      */
-    void put(Long mediaId, IMediaService.MediaDetailResult detail);
+    void putMediaDetail(Long mediaId, IMediaService.MediaDetailResult detail);
 
     /**
      * 删除缓存（单个）
      *
      * @param mediaId 媒体 ID
      */
-    void evict(Long mediaId);
+    void evictMediaDetail(Long mediaId);
 
     /**
      * 批量删除缓存
      *
      * @param mediaIds 媒体 ID 列表
      */
-    void evictBatch(List<Long> mediaIds);
+    void evictBatchMediaDetail(List<Long> mediaIds);
 }

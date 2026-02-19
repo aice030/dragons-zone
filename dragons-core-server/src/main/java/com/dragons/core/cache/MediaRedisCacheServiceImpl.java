@@ -25,7 +25,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public IMediaService.MediaDetailResult get(Long mediaId) {
+    public IMediaService.MediaDetailResult getMediaDetail(Long mediaId) {
         if (mediaId == null) {
             return null;
         }
@@ -43,7 +43,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public void put(Long mediaId, IMediaService.MediaDetailResult detail) {
+    public void putMediaDetail(Long mediaId, IMediaService.MediaDetailResult detail) {
         if (mediaId == null || detail == null) {
             return;
         }
@@ -57,7 +57,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public void evict(Long mediaId) {
+    public void evictMediaDetail(Long mediaId) {
         if (mediaId == null) {
             return;
         }
@@ -71,7 +71,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public void evictBatch(List<Long> mediaIds) {
+    public void evictBatchMediaDetail(List<Long> mediaIds) {
         if (mediaIds == null || mediaIds.isEmpty()) {
             return;
         }
