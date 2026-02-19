@@ -42,9 +42,19 @@ public interface MediaRedisCacheService {
     int NULL_VALUE_TTL_SECONDS = 60;
 
     /**
-     * 分布式锁 Key 前缀（用于防止缓存击穿）
+     * 查询media core缓存的分布式锁 Key 前缀（用于防止缓存击穿）
      */
-    String LOCK_KEY_PREFIX = "lock:media:core:";
+    String LOCK_MEDIA_CORE_KEY_PREFIX = "lock:media:core:";
+
+    /**
+     * 查询media list缓存的分布式锁 Key 前缀（用于防止缓存击穿）
+     */
+    String LOCK_MEDIA_LIST_KEY_PREFIX = "lock:media:list:";
+
+    /**
+     * 查询media my缓存的分布式锁 Key 前缀（用于防止缓存击穿）
+     */
+    String LOCK_MEDIA_MY_KEY_PREFIX = "lock:media:my:";
 
     /**
      * 分布式锁 TTL（秒）
@@ -173,7 +183,7 @@ public interface MediaRedisCacheService {
      * @param requestId 请求唯一标识（用于防止误释放其他线程的锁）
      * @return 获取成功返回 true，失败返回 false
      */
-    boolean tryLock(Long mediaId, String requestId);
+    boolean tryLockMediaCore(Long mediaId, String requestId);
 
     /**
      * 释放分布式锁（只有 requestId 匹配时才释放）
@@ -181,7 +191,7 @@ public interface MediaRedisCacheService {
      * @param mediaId 媒体 ID
      * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
      */
-    void unlock(Long mediaId, String requestId);
+    void unlockMediaCore(Long mediaId, String requestId);
 
     /**
      * 续期分布式锁（延长锁的过期时间，只有 requestId 匹配时才续期）
@@ -190,5 +200,75 @@ public interface MediaRedisCacheService {
      * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
      * @return 续期成功返回 true，失败返回 false
      */
-    boolean renewLock(Long mediaId, String requestId);
+    boolean renewLockMediaCore(Long mediaId, String requestId);
+
+    /**
+     * 尝试获取媒体列表分布式锁（用于防止缓存击穿）
+     *
+     * @param zoneUserId 专区ID：0=公共区，其他=成员专区ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param requestId 请求唯一标识（用于防止误释放其他线程的锁）
+     * @return 获取成功返回 true，失败返回 false
+     */
+    boolean tryLockMediaList(Long zoneUserId, Byte category, Integer page, Integer size, String requestId);
+
+    /**
+     * 释放媒体列表分布式锁（只有 requestId 匹配时才释放）
+     *
+     * @param zoneUserId 专区ID：0=公共区，其他=成员专区ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
+     */
+    void unlockMediaList(Long zoneUserId, Byte category, Integer page, Integer size, String requestId);
+
+    /**
+     * 续期媒体列表分布式锁（延长锁的过期时间，只有 requestId 匹配时才续期）
+     *
+     * @param zoneUserId 专区ID：0=公共区，其他=成员专区ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
+     * @return 续期成功返回 true，失败返回 false
+     */
+    boolean renewLockMediaList(Long zoneUserId, Byte category, Integer page, Integer size, String requestId);
+
+    /**
+     * 尝试获取我的上传列表分布式锁（用于防止缓存击穿）
+     *
+     * @param uploaderId 上传者用户ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param requestId 请求唯一标识（用于防止误释放其他线程的锁）
+     * @return 获取成功返回 true，失败返回 false
+     */
+    boolean tryLockMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, String requestId);
+
+    /**
+     * 释放我的上传列表分布式锁（只有 requestId 匹配时才释放）
+     *
+     * @param uploaderId 上传者用户ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
+     */
+    void unlockMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, String requestId);
+
+    /**
+     * 续期我的上传列表分布式锁（延长锁的过期时间，只有 requestId 匹配时才续期）
+     *
+     * @param uploaderId 上传者用户ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param page 页码（从1开始）
+     * @param size 每页数量
+     * @param requestId 请求唯一标识（必须与获取锁时的 requestId 一致）
+     * @return 续期成功返回 true，失败返回 false
+     */
+    boolean renewLockMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, String requestId);
 }

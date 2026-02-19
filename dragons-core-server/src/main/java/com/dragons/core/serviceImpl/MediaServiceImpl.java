@@ -445,7 +445,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         try {
             // 1.1 尝试获取分布式锁（最多重试3次）
             for (int retryCount = 0; retryCount < 3; retryCount++) {
-                lockAcquired = mediaRedisCacheService.tryLock(mediaId, requestId);
+                lockAcquired = mediaRedisCacheService.tryLockMediaCore(mediaId, requestId);
                 if (lockAcquired) {
                     // 获取锁成功，启动后台线程自动续期（WatchDog机制）
                     // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
@@ -457,11 +457,12 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                     final Long finalMediaId = mediaId;
                     final String finalRequestId = requestId;
                     lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                        boolean renewed = mediaRedisCacheService.renewLock(finalMediaId, finalRequestId);
+                        boolean renewed = mediaRedisCacheService.renewLockMediaCore(finalMediaId, finalRequestId);
                         if (!renewed) {
                             log.warn("lock renewal failed, lock may have been released mediaId={} requestId={}", finalMediaId, finalRequestId);
                         }
-                    }, 0, 2, TimeUnit.SECONDS); // 立即开始，每2秒执行一次
+                        // 立即开始，每2秒执行一次
+                    }, 0, 2, TimeUnit.SECONDS);
                     break; // 获取成功，跳出循环
                 }
                 // 1.2 获取锁失败，等待100ms后重试查询缓存
@@ -587,7 +588,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
             // 只有获取到锁才释放（使用 requestId 确保只释放自己的锁）
             if (lockAcquired) {
-                mediaRedisCacheService.unlock(mediaId, requestId);
+                mediaRedisCacheService.unlockMediaCore(mediaId, requestId);
             }
         }
 

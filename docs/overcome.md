@@ -302,3 +302,105 @@
 ### 结果
 - 60秒内重复查询不存在的数据，直接命中空值缓存，避免访问数据库
 - 新数据创建后，空值缓存被清理，可正常查询
+
+---
+
+## 列表查询：双重分布式锁 + 空值缓存
+
+### 设计理念
+- **双重锁保护**：列表锁（`lock:media:list`）保护列表查询，media:core 锁（`lock:media:core`）保护单个媒体查询
+- **二级缓存结构**：列表缓存（`media:list`）存储 total 和 mediaIds，核心数据缓存（`media:core`）存储完整 Media 实体
+- **空值缓存**：列表为空时缓存 `{"total": 0, "mediaIds": []}`，media:core 不存在时缓存 `"__NULL__"`
+
+### listMedia 实现流程
+
+**第一步：查询列表缓存**
+- 查询 `media:list:{zoneUserId}:{category}:{page}:{size}`
+- 命中则进入"列表缓存命中"流程，未命中则进入"列表缓存未命中"流程
+
+**第二步A：列表缓存命中**
+1. 批量查询 `media:core`：`batchGetMediaCore(cachedMediaIds)`
+2. 处理未命中的 media:core（加分布式锁）：
+   - 对每个 `missingId` 获取 `lock:media:core:{mediaId}` 锁
+   - 双重检测：获取锁后再次查询 `media:core` 缓存
+   - 仍未命中则查询数据库并写入缓存（不存在则写入空值 `putNullValue`）
+   - 锁续期：每2秒自动续期，确保锁不过期
+3. 构建结果：按 `cachedMediaIds` 顺序，只保留 `state=0` 的媒体
+
+**第二步B：列表缓存未命中**
+1. 获取列表分布式锁：`lock:media:list:{zoneUserId}:{category}:{page}:{size}`
+   - 最多重试3次，每次等待100ms后重试查询缓存
+   - 获取锁成功后启动锁续期线程（每2秒续期）
+2. 双重检测：获取锁后再次查询列表缓存，命中则释放锁并返回
+3. 查询数据库：调用 `queryMediaListFromDB()` 查询 total 和 records
+4. 写入缓存：调用 `writeMediaListCache()` 写入列表缓存和 media:core 缓存
+   - 列表为空时写入空列表缓存：`{"total": 0, "mediaIds": []}`（TTL 300秒）
+5. 释放锁：finally 块中停止续期线程并释放锁
+
+### listMyUpload 实现流程
+
+**第一步：查询列表缓存**
+- 查询 `media:my:{uploaderId}:{category}:{page}:{size}`
+- 命中则进入"列表缓存命中"流程，未命中则进入"列表缓存未命中"流程
+
+**第二步A：列表缓存命中**
+1. 批量查询 `media:core`：`batchGetMediaCore(cachedMediaIds)`
+2. 处理未命中的 media:core（加分布式锁）：
+   - 对每个 `missingId` 获取 `lock:media:core:{mediaId}` 锁
+   - 双重检测：获取锁后再次查询 `media:core` 缓存
+   - 仍未命中则查询数据库并写入缓存（不存在则写入空值 `putNullValue`）
+   - 锁续期：每2秒自动续期，确保锁不过期
+3. 构建结果：按 `cachedMediaIds` 顺序，排除 `state=5` 的媒体（允许显示 state=6/7）
+
+**第二步B：列表缓存未命中**
+1. 获取列表分布式锁：`lock:media:my:{uploaderId}:{category}:{page}:{size}`
+   - 最多重试3次，每次等待100ms后重试查询缓存
+   - 获取锁成功后启动锁续期线程（每2秒续期）
+2. 双重检测：获取锁后再次查询列表缓存，命中则释放锁并返回
+3. 查询数据库：调用 `queryMyUploadListFromDB()` 查询 total 和 records（排除 state=5）
+4. 写入缓存：调用 `writeMyUploadListCache()` 写入列表缓存和 media:core 缓存
+   - 列表为空时写入空列表缓存：`{"total": 0, "mediaIds": []}`（TTL 300秒）
+5. 释放锁：finally 块中停止续期线程并释放锁
+
+### 空值缓存设置
+
+**列表空值缓存**
+- 触发条件：查询结果为空（`records == null || records.isEmpty()`）
+- 缓存内容：`{"total": 0, "mediaIds": []}`
+- TTL：300秒（与正常列表缓存一致）
+- 设置位置：`writeMediaListCache()` 和 `writeMyUploadListCache()` 方法中
+
+**media:core 空值缓存**
+- 触发条件：数据库查询不到数据（`media == null || media.getState() == null`）
+- 缓存内容：`"__NULL__"`
+- TTL：60秒
+- 设置位置：`queryAndWriteMediaCore()` 方法中
+
+### 锁续期机制
+
+**WatchDog 机制**
+- 获取锁成功后启动后台线程，每2秒自动续期
+- 锁TTL是5秒，每2秒续期一次，确保锁不会过期
+- 在 finally 块中优雅关闭续期线程（等待最多1秒）
+
+**应用位置**
+- 列表分布式锁：`listMedia()` 和 `listMyUpload()` 方法中
+- media:core 分布式锁：`loadMissingMediaWithLock()` 方法中
+
+### 代码结构
+
+**分布式锁逻辑**：保留在主方法中，清晰可见
+- 锁获取、重试、双重检测、锁续期、锁释放都在主方法中
+
+**查询和写入逻辑**：提取为独立方法
+- `queryMediaListFromDB()` / `queryMyUploadListFromDB()`：查询数据库
+- `writeMediaListCache()` / `writeMyUploadListCache()`：写入缓存
+- `buildResultFromCache()` / `buildMyUploadResultFromCache()`：从缓存构建结果
+- `loadMissingMediaWithLock()`：加载未命中的 media:core（含分布式锁）
+- `queryAndWriteMediaCore()`：查询并写入单个 media:core
+
+### 结果
+- 双重锁保护有效防止缓存击穿（列表锁 + media:core 锁）
+- 空值缓存有效防止缓存穿透（列表空值 + media:core 空值）
+- 锁续期机制确保长时间业务不会导致锁过期
+- 代码结构清晰，分布式锁逻辑和查询逻辑分离

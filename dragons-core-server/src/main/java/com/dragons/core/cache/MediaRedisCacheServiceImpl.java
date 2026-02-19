@@ -128,6 +128,32 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
         return MEDIA_LIST_KEY_PREFIX + safeZoneUserId + ":" + categoryStr + ":*";
     }
 
+    /**
+     * 构建媒体列表分布式锁 key
+     * 格式：lock:media:list:{zoneUserId}:{category}:{page}:{size}
+     */
+    private String buildMediaListLockKey(Long zoneUserId, Byte category, Integer page, Integer size) {
+        long safeZoneUserId = zoneUserId == null ? 0L : zoneUserId;
+        String categoryStr = categoryToString(category);
+        int safePage = page == null || page < 1 ? 1 : page;
+        int safeSize = size == null || size < 1 ? 10 : size;
+        return LOCK_MEDIA_LIST_KEY_PREFIX + safeZoneUserId + ":" + categoryStr + ":" + safePage + ":" + safeSize;
+    }
+
+    /**
+     * 构建我的上传列表分布式锁 key
+     * 格式：lock:media:my:{uploaderId}:{category}:{page}:{size}
+     */
+    private String buildMyUploadListLockKey(Long uploaderId, Byte category, Integer page, Integer size) {
+        if (uploaderId == null) {
+            throw new IllegalArgumentException("uploaderId cannot be null");
+        }
+        String categoryStr = categoryToString(category);
+        int safePage = page == null || page < 1 ? 1 : page;
+        int safeSize = size == null || size < 1 ? 10 : size;
+        return LOCK_MEDIA_MY_KEY_PREFIX + uploaderId + ":" + categoryStr + ":" + safePage + ":" + safeSize;
+    }
+
     @Override
     public MediaListCacheValue getMediaList(Long zoneUserId, Byte category, Integer page, Integer size) {
         String key = buildMediaListKey(zoneUserId, category, page, size);
@@ -279,11 +305,11 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public boolean tryLock(Long mediaId, String requestId) {
+    public boolean tryLockMediaCore(Long mediaId, String requestId) {
         if (mediaId == null || requestId == null || requestId.trim().isEmpty()) {
             return false;
         }
-        String key = LOCK_KEY_PREFIX + mediaId;
+        String key = LOCK_MEDIA_CORE_KEY_PREFIX + mediaId;
         try {
             // 使用 SETNX 原子操作：SET lock:media:core:{mediaId} {requestId} EX 5 NX
             // requestId 作为锁的值，用于标识锁的持有者
@@ -308,11 +334,11 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public void unlock(Long mediaId, String requestId) {
+    public void unlockMediaCore(Long mediaId, String requestId) {
         if (mediaId == null || requestId == null || requestId.trim().isEmpty()) {
             return;
         }
-        String key = LOCK_KEY_PREFIX + mediaId;
+        String key = LOCK_MEDIA_CORE_KEY_PREFIX + mediaId;
         try {
             // Lua 脚本：原子性地检查并删除锁
             // 只有当锁的值等于 requestId 时才删除，防止误释放其他线程的锁
@@ -344,11 +370,11 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
     }
 
     @Override
-    public boolean renewLock(Long mediaId, String requestId) {
+    public boolean renewLockMediaCore(Long mediaId, String requestId) {
         if (mediaId == null || requestId == null || requestId.trim().isEmpty()) {
             return false;
         }
-        String key = LOCK_KEY_PREFIX + mediaId;
+        String key = LOCK_MEDIA_CORE_KEY_PREFIX + mediaId;
         try {
             // Lua 脚本：原子性地检查并续期锁
             // 只有当锁的值等于 requestId 时才续期，防止续期其他线程的锁
@@ -379,6 +405,234 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
             }
         } catch (Exception e) {
             log.error("renew lock failed mediaId={} requestId={} error={}", mediaId, requestId, e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    public boolean tryLockMediaList(Long zoneUserId, Byte category, Integer page, Integer size, String requestId) {
+        if (requestId == null || requestId.trim().isEmpty()) {
+            return false;
+        }
+        String key = buildMediaListLockKey(zoneUserId, category, page, size);
+        try {
+            // 使用 SETNX 原子操作：SET lock:media:list:{zoneUserId}:{category}:{page}:{size} {requestId} EX 5 NX
+            // requestId 作为锁的值，用于标识锁的持有者
+            Boolean success = redisTemplate.opsForValue().setIfAbsent(
+                    key,
+                    // 使用 requestId 作为锁的值
+                    requestId,
+                    LOCK_TTL_SECONDS,
+                    TimeUnit.SECONDS
+            );
+            if (Boolean.TRUE.equals(success)) {
+                log.info("distributed lock acquired for media list zoneUserId={} category={} page={} size={} requestId={}", 
+                        zoneUserId, category, page, size, requestId);
+                return true;
+            } else {
+                log.warn("distributed lock already held by another request zoneUserId={} category={} page={} size={}", 
+                        zoneUserId, category, page, size);
+                return false;
+            }
+        } catch (Exception e) {
+            log.error("try lock failed for media list zoneUserId={} category={} page={} size={} requestId={} error={}", 
+                    zoneUserId, category, page, size, requestId, e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    public void unlockMediaList(Long zoneUserId, Byte category, Integer page, Integer size, String requestId) {
+        if (requestId == null || requestId.trim().isEmpty()) {
+            return;
+        }
+        String key = buildMediaListLockKey(zoneUserId, category, page, size);
+        try {
+            // Lua 脚本：原子性地检查并删除锁
+            // 只有当锁的值等于 requestId 时才删除，防止误释放其他线程的锁
+            String luaScript = 
+                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                "    return redis.call('del', KEYS[1]) " +
+                "else " +
+                "    return 0 " +
+                "end";
+            
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+            script.setScriptText(luaScript);
+            script.setResultType(Long.class);
+            
+            Long result = redisTemplate.execute(
+                    script,
+                    Collections.singletonList(key),
+                    requestId
+            );
+            
+            if (result != null && result > 0) {
+                log.info("distributed lock released for media list zoneUserId={} category={} page={} size={} requestId={}", 
+                        zoneUserId, category, page, size, requestId);
+            } else {
+                log.warn("distributed lock release failed: lock not held by this request zoneUserId={} category={} page={} size={} requestId={}", 
+                        zoneUserId, category, page, size, requestId);
+            }
+        } catch (Exception e) {
+            log.error("unlock failed for media list zoneUserId={} category={} page={} size={} requestId={} error={}", 
+                    zoneUserId, category, page, size, requestId, e.getMessage());
+        }
+    }
+
+    @Override
+    public boolean renewLockMediaList(Long zoneUserId, Byte category, Integer page, Integer size, String requestId) {
+        if (requestId == null || requestId.trim().isEmpty()) {
+            return false;
+        }
+        String key = buildMediaListLockKey(zoneUserId, category, page, size);
+        try {
+            // Lua 脚本：原子性地检查并续期锁
+            // 只有当锁的值等于 requestId 时才续期，防止续期其他线程的锁
+            String luaScript = 
+                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                "    return redis.call('expire', KEYS[1], ARGV[2]) " +
+                "else " +
+                "    return 0 " +
+                "end";
+            
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+            script.setScriptText(luaScript);
+            script.setResultType(Long.class);
+            
+            Long result = redisTemplate.execute(
+                    script,
+                    Collections.singletonList(key),
+                    requestId,
+                    String.valueOf(LOCK_TTL_SECONDS)
+            );
+            
+            if (result != null && result > 0) {
+                log.debug("distributed lock renewed for media list zoneUserId={} category={} page={} size={} requestId={}", 
+                        zoneUserId, category, page, size, requestId);
+                return true;
+            } else {
+                log.debug("distributed lock renew failed: lock not held by this request zoneUserId={} category={} page={} size={} requestId={}", 
+                        zoneUserId, category, page, size, requestId);
+                return false;
+            }
+        } catch (Exception e) {
+            log.error("renew lock failed for media list zoneUserId={} category={} page={} size={} requestId={} error={}", 
+                    zoneUserId, category, page, size, requestId, e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    public boolean tryLockMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, String requestId) {
+        if (uploaderId == null || requestId == null || requestId.trim().isEmpty()) {
+            return false;
+        }
+        String key = buildMyUploadListLockKey(uploaderId, category, page, size);
+        try {
+            // 使用 SETNX 原子操作：SET lock:media:my:{uploaderId}:{category}:{page}:{size} {requestId} EX 5 NX
+            // requestId 作为锁的值，用于标识锁的持有者
+            Boolean success = redisTemplate.opsForValue().setIfAbsent(
+                    key,
+                    // 使用 requestId 作为锁的值
+                    requestId,
+                    LOCK_TTL_SECONDS,
+                    TimeUnit.SECONDS
+            );
+            if (Boolean.TRUE.equals(success)) {
+                log.info("distributed lock acquired for my upload list uploaderId={} category={} page={} size={} requestId={}", 
+                        uploaderId, category, page, size, requestId);
+                return true;
+            } else {
+                log.warn("distributed lock already held by another request uploaderId={} category={} page={} size={}", 
+                        uploaderId, category, page, size);
+                return false;
+            }
+        } catch (Exception e) {
+            log.error("try lock failed for my upload list uploaderId={} category={} page={} size={} requestId={} error={}", 
+                    uploaderId, category, page, size, requestId, e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    public void unlockMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, String requestId) {
+        if (uploaderId == null || requestId == null || requestId.trim().isEmpty()) {
+            return;
+        }
+        String key = buildMyUploadListLockKey(uploaderId, category, page, size);
+        try {
+            // Lua 脚本：原子性地检查并删除锁
+            // 只有当锁的值等于 requestId 时才删除，防止误释放其他线程的锁
+            String luaScript = 
+                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                "    return redis.call('del', KEYS[1]) " +
+                "else " +
+                "    return 0 " +
+                "end";
+            
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+            script.setScriptText(luaScript);
+            script.setResultType(Long.class);
+            
+            Long result = redisTemplate.execute(
+                    script,
+                    Collections.singletonList(key),
+                    requestId
+            );
+            
+            if (result != null && result > 0) {
+                log.info("distributed lock released for my upload list uploaderId={} category={} page={} size={} requestId={}", 
+                        uploaderId, category, page, size, requestId);
+            } else {
+                log.warn("distributed lock release failed: lock not held by this request uploaderId={} category={} page={} size={} requestId={}", 
+                        uploaderId, category, page, size, requestId);
+            }
+        } catch (Exception e) {
+            log.error("unlock failed for my upload list uploaderId={} category={} page={} size={} requestId={} error={}", 
+                    uploaderId, category, page, size, requestId, e.getMessage());
+        }
+    }
+
+    @Override
+    public boolean renewLockMyUploadList(Long uploaderId, Byte category, Integer page, Integer size, String requestId) {
+        if (uploaderId == null || requestId == null || requestId.trim().isEmpty()) {
+            return false;
+        }
+        String key = buildMyUploadListLockKey(uploaderId, category, page, size);
+        try {
+            // Lua 脚本：原子性地检查并续期锁
+            // 只有当锁的值等于 requestId 时才续期，防止续期其他线程的锁
+            String luaScript = 
+                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                "    return redis.call('expire', KEYS[1], ARGV[2]) " +
+                "else " +
+                "    return 0 " +
+                "end";
+            
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+            script.setScriptText(luaScript);
+            script.setResultType(Long.class);
+            
+            Long result = redisTemplate.execute(
+                    script,
+                    Collections.singletonList(key),
+                    requestId,
+                    String.valueOf(LOCK_TTL_SECONDS)
+            );
+            
+            if (result != null && result > 0) {
+                log.debug("distributed lock renewed for my upload list uploaderId={} category={} page={} size={} requestId={}", 
+                        uploaderId, category, page, size, requestId);
+                return true;
+            } else {
+                log.debug("distributed lock renew failed: lock not held by this request uploaderId={} category={} page={} size={} requestId={}", 
+                        uploaderId, category, page, size, requestId);
+                return false;
+            }
+        } catch (Exception e) {
+            log.error("renew lock failed for my upload list uploaderId={} category={} page={} size={} requestId={} error={}", 
+                    uploaderId, category, page, size, requestId, e.getMessage());
             return false;
         }
     }
