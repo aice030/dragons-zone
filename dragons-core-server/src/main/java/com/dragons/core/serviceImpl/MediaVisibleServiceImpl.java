@@ -18,6 +18,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -56,9 +58,9 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             safeSize = 100;
         }
         // 先确认是成员专区展示（zoneUserId不为null），还是在公共区全量展示（zoneUserId为null）
-        long safeZoneUserId = (zoneUserId == null) ? 0L : zoneUserId;
         Long zoneUserIdForCache = zoneUserId == null ? 0L : zoneUserId;
 
+        // 参数校验：传入的 category 是否合法
         if (category != null && category != 0 && category != 1) {
             log.warn("listMedia invalid category category={} zoneUserId={}", category, zoneUserId);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
@@ -78,14 +80,14 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                     zoneUserIdForCache, category, safePage, safeSize, cachedList.getTotal(), cachedMediaIds.size());
             
             Map<Long, Media> cachedMediaMap = mediaRedisCacheService.batchGetMediaCore(cachedMediaIds);
-            
-            // 找出未命中的ID，从DB加载
+
+            // 找出未命中的ID，后续从DB加载
             List<Long> missingIds = cachedMediaIds.stream()
                     .filter(id -> !cachedMediaMap.containsKey(id))
                     .collect(Collectors.toList());
-            
+
+            // 未命中ID列表不为空，从DB加载未命中的媒体数据
             if (!missingIds.isEmpty()) {
-                // 从DB加载未命中的媒体数据
                 List<Media> missingMedia = mediaService.listByIds(missingIds);
                 if (missingMedia != null) {
                     for (Media media : missingMedia) {
@@ -116,8 +118,8 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             log.info("listMedia cache miss zoneUserId={} category={} page={} size={}", 
                     zoneUserIdForCache, category, safePage, safeSize);
             
-            if (safeZoneUserId == 0L) {
-                //公共区：直接查media表，利用(state, category, update_time)索引获取特定类别的media(图片/视频)或(state, update_time)索引获取全部类型的media
+            if (zoneUserIdForCache == 0L) {
+                // 公共区：直接查media表，利用(state, category, update_time)索引获取特定类别的media(图片/视频)或(state, update_time)索引获取全部类型的media
                 // 先统计记录数量，用于分页中统计记录总数
                 LambdaQueryWrapper<Media> countWrapper = new LambdaQueryWrapper<>();
                 countWrapper.eq(Media::getState, (byte) 0);
@@ -140,9 +142,9 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 records = mediaMapper.selectList(listWrapper);
             } else {
                 // 专区：INNER JOIN media_visible，使用内连接查询，利用 (user_id, media_id) 与 media 主键，达到类似索引的效果，提高查询效率
-                total = mediaMapper.countMediaInZone(safeZoneUserId, category);
+                total = mediaMapper.countMediaInZone(zoneUserIdForCache, category);
                 long offset = (long) (safePage - 1) * safeSize;
-                records = mediaMapper.listMediaInZone(safeZoneUserId, category, offset, safeSize);
+                records = mediaMapper.listMediaInZone(zoneUserIdForCache, category, offset, safeSize);
             }
             
             // 写入列表缓存（包含total和mediaIds）和 media:core 缓存
@@ -185,7 +187,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 ));
             }
         }
-        log.info("listMedia zoneUserId={} page={} size={} category={} total={}", safeZoneUserId, safePage, safeSize, category, total);
+        log.info("listMedia zoneUserId={} page={} size={} category={} total={}", zoneUserIdForCache, safePage, safeSize, category, total);
         return new MediaPageResult(total, list);
     }
 

@@ -438,8 +438,10 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
         // 1. 缓存未命中，尝试获取分布式锁，防止缓存击穿
         boolean lockAcquired = false;
-        String requestId = UUID.randomUUID().toString(); // 生成唯一标识，防止误释放其他线程的锁
-        ScheduledExecutorService lockRenewalExecutor = null; // 锁续期线程池
+        // 生成唯一标识，防止误释放其他线程的锁
+        String requestId = UUID.randomUUID().toString();
+        // 锁续期线程池 
+        ScheduledExecutorService lockRenewalExecutor = null; 
         try {
             // 1.1 尝试获取分布式锁（最多重试3次）
             for (int retryCount = 0; retryCount < 3; retryCount++) {
