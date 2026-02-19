@@ -214,3 +214,22 @@
 - **实现**：`MinioStorageService`、`OssStorageService` 实现该接口；当前默认 OSS（`OssStorageService` 标注 `@Primary`）。
 - **配置**：`oss.*` / `minio.*` 在 application.yml 中配置；`OssConfig`、`MinioConfig` 分别创建 OSS 客户端或 MinioClient Bean。
 - **业务层**：仅注入 `StorageService`，所有读写通过接口完成，与具体存储解耦。
+
+---
+
+## 媒体缓存设计
+
+### 设计理念：为何只缓存 state=0
+- **媒体详情缓存**、**下载链接缓存** 仅缓存 state=0（已审核通过、公开）的媒体。
+- **原因**：state=0 对所有人可见，单 key 即可；state=6/7 仅上传者或审核者可访问，若按 mediaId 单 key 缓存会越权（A 请求写入后 B 命中则拿到本不该见的链接），故不缓存，每次校验权限后直接向 OSS 取链接。
+- **结果**：详情可先查缓存、命中即返；下载链接需先查 DB 拿 state、做权限校验后，仅 state=0 时查/写缓存。
+
+### 使用缓存的方法
+- **读**：`getMediaDetail`（先查 Redis，命中即返）；`getDownloadUrl`（仅 state=0 时查 Redis，未命中再向 OSS 取并回写）。
+- **写**：`getMediaDetail` 未命中且 state=0 时 `putMediaDetail`；`getDownloadUrl` 未命中且 state=0 时 `putDownloadUrl`。
+- **删（写时删除）**：`update`、`updateCover`、`delete`、`approveMedia`、`rejectMedia` 在变更后调用 `evictMediaDetail` + `evictDownloadUrl`；`rebuildVisible` 只改可见性不改 media 核心字段，不删缓存。
+
+### 延迟双删
+- **使用位置**：`delete` 方法。流程：第一次删缓存 → `removeById` 物理删 media → 延迟 500ms 后再删一次缓存（`ScheduledExecutorService.schedule`）。
+- **目的**：避免“删库后、删缓存前”并发请求读 DB 并回写缓存；延迟后再删一次清理该时间窗内可能被回写的脏缓存。
+- **实现**：单例 `ScheduledExecutorService`（线程名 media-cache-delay-delete），延迟任务内 try-catch 仅打日志，不抛异常。

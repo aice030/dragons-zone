@@ -1021,8 +1021,15 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             if (!this.updateById(media)) {
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
             } else {
-                // [Redis] 写时删除：审核通过会改变 state，删除该媒体缓存
-                mediaRedisCacheService.evictMediaDetail(media.getId());
+                // 审核通过会改变 state，删除该媒体缓存
+                // 目前业务无需删除缓存，保留是为应对后续可能出现的state=0的资源被打回重审
+                try{
+                    mediaRedisCacheService.evictMediaDetail(media.getId());
+                    mediaRedisCacheService.evictDownloadUrl(media.getId());
+                }catch (Exception e){
+                    log.warn("after approve media cache delete failed error={}", e.getMessage());
+                }
+
             }
         }
         int successCount = mediaIds.size() - failedItems.size();
@@ -1073,8 +1080,14 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             if (!this.updateById(media)) {
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
             } else {
-                // [Redis] 写时删除：审核驳回会改变 state，删除该媒体缓存
-                mediaRedisCacheService.evictMediaDetail(media.getId());
+                // 审核驳回会改变 state，删除该媒体缓存
+                // 目前业务无需删除缓存，保留是为应对后续可能出现的state=0的资源被打回重审
+                try{
+                    mediaRedisCacheService.evictMediaDetail(media.getId());
+                    mediaRedisCacheService.evictDownloadUrl(media.getId());
+                }catch (Exception e){
+                    log.warn("after reject media cache delete failed error={}", e.getMessage());
+                }
             }
         }
         int successCount = mediaIds.size() - failedItems.size();

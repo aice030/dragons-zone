@@ -84,6 +84,24 @@ JSON序列化的 `MediaDetailResult` 对象，包含以下字段：
 - **写时删除（Write-Through）**：当媒体信息发生变更时（更新、删除、审核），主动删除对应的缓存
 - **删除操作**：删除 Redis 中该 key。实现时在调用 evictMediaDetail(mediaId) 的同一处同时调用 evictDownloadUrl(mediaId)
 
+#### 实现说明
+
+**查（getDownloadUrl）**
+- 先查 DB、做 state/权限与 storage 存在性校验；仅 **state=0** 时查 Redis，命中即返
+- 未命中则调 StorageService.getPresignedUrl，仅 state=0 时写入缓存（TTL = 预设过期秒数 - 60），state=6/7 不写缓存直接返回 URL
+
+**增（upload）**
+- 无需缓存操作：新上传媒体为 state=6 待审核，不参与缓存
+
+**改（update / updateCover / rebuildVisible）**
+- update、updateCover：写库成功后与 evictMediaDetail 同一处调用 evictDownloadUrl（建议 try-catch 仅打日志，不抛异常）
+- rebuildVisible：只改可见性，未改 media 核心字段，不删下载链接缓存
+
+**删（delete）**
+- 第一次删缓存（evictDownloadUrl + evictMediaDetail）→ removeById 物理删 media → 延迟 500ms 后再删一次缓存（延迟双删）
+
+**审核（approveMedia / rejectMedia）**
+- 每成功处理一条，与 evictMediaDetail 同一处调用 evictDownloadUrl
 
 ### 缓存media列表（仅缓存media_id）
 
