@@ -4,6 +4,7 @@ import com.dragons.core.dto.MediaListCacheValue;
 import com.dragons.core.entity.Media;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -288,7 +289,8 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
             // requestId 作为锁的值，用于标识锁的持有者
             Boolean success = redisTemplate.opsForValue().setIfAbsent(
                     key,
-                    requestId,  // 使用 requestId 作为锁的值
+                    // 使用 requestId 作为锁的值
+                    requestId,
                     LOCK_TTL_SECONDS,
                     TimeUnit.SECONDS
             );
@@ -296,7 +298,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
                 log.info("distributed lock acquired mediaId={} requestId={}", mediaId, requestId);
                 return true;
             } else {
-                log.debug("distributed lock already held by another request mediaId={}", mediaId);
+                log.warn("distributed lock already held by another request mediaId={}", mediaId);
                 return false;
             }
         } catch (Exception e) {
@@ -321,8 +323,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
                 "    return 0 " +
                 "end";
             
-            org.springframework.data.redis.core.script.DefaultRedisScript<Long> script = 
-                    new org.springframework.data.redis.core.script.DefaultRedisScript<>();
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
             script.setScriptText(luaScript);
             script.setResultType(Long.class);
             
@@ -358,8 +359,7 @@ public class MediaRedisCacheServiceImpl implements MediaRedisCacheService {
                 "    return 0 " +
                 "end";
             
-            org.springframework.data.redis.core.script.DefaultRedisScript<Long> script = 
-                    new org.springframework.data.redis.core.script.DefaultRedisScript<>();
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
             script.setScriptText(luaScript);
             script.setResultType(Long.class);
             
