@@ -16,8 +16,11 @@
 - **构建工具**: Maven
 
 ### 前端
-- **框架**: Vue
-- 待开发
+- **框架**: Vue 3.5.27
+- **构建工具**: Vite 7.3.1
+- **状态管理**: Pinia 3.0.4
+- **路由**: Vue Router 5.0.1
+- **HTTP客户端**: Axios 1.13.5
 
 ## 项目结构
 
@@ -31,12 +34,24 @@ dragons-zone/
 │   │   ├── serviceImpl/         # 服务实现层
 │   │   ├── dao/                 # 数据访问层（Mapper）
 │   │   ├── entity/              # 实体类
-│   │   ├── dto/                 # 数据传输对象（待创建）
-│   │   └── util/                # 工具类（待创建）
+│   │   ├── dto/                 # 数据传输对象
+│   │   └── util/                # 工具类
 │   └── src/main/resources/
 │       ├── application.yml      # 应用配置
 │       └── mapper/              # MyBatis XML映射文件
-└── development.md               # 开发文档
+├── dragons-frontend/             # 前端应用
+│   ├── src/
+│   │   ├── api/                 # API接口封装（user.js、media.js、treehole.js）
+│   │   ├── assets/              # 静态资源（样式文件）
+│   │   ├── components/         # 组件（导航栏、弹窗、媒体卡片等）
+│   │   ├── config/             # 配置文件（成员列表、用户菜单等）
+│   │   ├── router/              # 路由定义与守卫
+│   │   ├── stores/              # Pinia状态管理（用户登录态）
+│   │   ├── views/               # 页面组件（浏览、上传、详情等）
+│   │   ├── App.vue              # 根组件
+│   │   └── main.js             # 应用入口
+│   └── package.json            # 依赖配置
+└── docs/                        # 文档目录
 ```
 
 ## 核心功能
@@ -167,13 +182,20 @@ dragons-zone/
 - **业务逻辑**：媒体软删除与 MinIO 顺序、上传 state=2 写库失败回滚 MinIO、封面更新补偿、可见范围差量同步与事务、树洞防刷与回复原子性、分享部分失败动态文案等已按文档实现，未发现逻辑错误。
 - **结论**：后端接口与业务逻辑已闭环，可进入第二阶段前端开发。
 
-### 第二阶段：前端开发
-- [ ] Vue项目搭建
-- [ ] 登录/注册页面
-- [ ] 文件上传页面
-- [ ] 文件浏览页面
-- [ ] 树洞页面
-- [ ] 前后端联调
+### 第二阶段：前端开发 ✅
+- [x] Vue项目搭建（Vue 3 + Vite + Pinia + Vue Router）
+- [x] 登录/注册页面（LoginModal、RegisterModal、ForgotPasswordModal、ChangePasswordModal、DeregisterConfirmModal）
+- [x] 文件上传页面（UploadMedia.vue，支持图片批量上传、视频单文件上传）
+- [x] 文件浏览页面（MediaBrowse.vue，支持公共区/成员专区切换、类型筛选、滚动加载）
+- [x] 媒体详情页（MediaDetail.vue，支持图片/视频预览、下载、上一/下一切换）
+- [x] 我的上传页（MyUploads.vue，按类型筛选、查看状态、详情）
+- [x] 资源管理页（ResourceManage.vue，待审核列表、已上传列表、审核通过/驳回）
+- [x] 成员专区页（MemberZonePage.vue，成员简介、媒体展示、树洞留言）
+- [x] 树洞功能（MemberTreeHoleSection.vue，留言列表、投递、回复、状态管理、黑名单）
+- [x] 统一导航栏（NavBar.vue，登录态管理、用户菜单、成员专区选择）
+- [x] API封装（user.js、media.js、treehole.js，覆盖所有后端接口）
+- [x] 路由守卫（登录校验、权限校验）
+- [ ] 前后端联调（待测试）
 
 ### 第三阶段：优化与测试
 - [ ] 接口测试
@@ -694,6 +716,15 @@ mvn spring-boot:run
 - ✅ 未登录找回密码（忘记密码）
   - POST /api/user/forgotPassword：permitAll，无需 JWT；请求体 loginName、phoneNumber、newPassword；通过登录名+手机号校验身份后修改密码，不依赖验证码；登录名或手机号不匹配时统一返回 4017「登录名与手机号不匹配」；SecurityConfig 已加入该路径 permitAll。
 
+### 2026-02-13
+- ✅ 前端开发完成
+  - Vue 3 项目搭建（Vite + Pinia + Vue Router）
+  - 页面实现：欢迎页、媒体浏览、媒体详情、上传、我的上传、资源管理、成员专区
+  - 组件实现：统一导航栏、登录/注册/找回密码/修改密码/注销弹窗、媒体卡片/条带、详情弹窗、成员简介、树洞留言
+  - API 封装：用户（登录/注册/密码管理/用户管理）、媒体（列表/详情/上传/更新/删除/审核）、树洞（留言/回复/状态/黑名单）
+  - 路由守卫：登录校验、权限校验（资源管理页仅作者/管理员）
+  - 状态管理：用户登录态持久化（localStorage）
+
 ### 后端逻辑检查摘要（当前已完成功能）
 
 - **鉴权与权限**
@@ -707,4 +738,41 @@ mvn spring-boot:run
 
 - **建议与可选优化**
   - **唯一索引**：建议在 `tree_hole_message_visible` 上添加 `(owner_id, message_id)` 唯一索引（见 MYSQL_INDEXES.md），防止并发或异常重试导致重复记录；若已加可忽略。
-  - **分享去重**：已对 targetOwnerIds 在 Service 内做 distinct 去重后再循环。
+
+### 缓存与分布式锁实现（按 Redis_DESIGN.md）
+
+- ✅ **缓存架构**
+  - `media:core:{mediaId}`：媒体核心数据缓存（TTL 600秒），仅缓存 `state=0` 的媒体
+  - `media:list:{zoneUserId}:{category}:{page}:{size}`：媒体列表ID缓存（TTL 300秒）
+  - `media:my:{uploaderId}:{category}:{page}:{size}`：我的上传列表ID缓存（TTL 300秒）
+  - 空值缓存：`__NULL__` 标记（TTL 60秒），防止缓存穿透
+  - 写时删除：更新/删除/审核时主动删除相关缓存
+
+- ✅ **分布式锁防缓存击穿**
+  - 锁实现：Redis SETNX + requestId 标识，Lua 脚本保证原子性
+  - 锁粒度：`lock:media:core:{mediaId}`、`lock:media:list:{zoneUserId}:{category}:{page}:{size}`、`lock:media:my:{uploaderId}:{category}:{page}:{size}`
+  - 锁TTL：5秒，WatchDog机制每2秒续期
+  - 双重检测：获取锁后再次查询缓存，避免重复查询数据库
+  - 应用位置：`getMediaDetail()`、`listMedia()`、`listMyUpload()`、`loadMissingMediaWithLock()`
+
+-**应用位置**
+  - 列表分布式锁：`listMedia()` 和 `listMyUpload()` 方法中
+  - media:core 分布式锁：`loadMissingMediaWithLock()` 方法中
+
+-**代码结构**
+
+  -**分布式锁逻辑**：保留在主方法中，清晰可见
+  - 锁获取、重试、双重检测、锁续期、锁释放都在主方法中
+
+  -**查询和写入逻辑**：提取为独立方法
+    - `queryMediaListFromDB()` / `queryMyUploadListFromDB()`：查询数据库
+    - `writeMediaListCache()` / `writeMyUploadListCache()`：写入缓存
+    - `buildResultFromCache()` / `buildMyUploadResultFromCache()`：从缓存构建结果
+    - `loadMissingMediaWithLock()`：加载未命中的 media:core（含分布式锁）
+    - `queryAndWriteMediaCore()`：查询并写入单个 media:core
+
+  -**结果**
+    - 双重锁保护有效防止缓存击穿（列表锁 + media:core 锁）
+    - 空值缓存有效防止缓存穿透（列表空值 + media:core 空值）
+    - 锁续期机制确保长时间业务不会导致锁过期
+    - 代码结构清晰，分布式锁逻辑和查询逻辑分离
