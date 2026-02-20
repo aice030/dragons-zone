@@ -10,7 +10,7 @@ import com.baomidou.mybatisplus.generator.engine.FreemarkerTemplateEngine;
  */
 public class CodeGenerator {
     public static void main(String[] args) {
-        FastAutoGenerator.create("jdbc:mysql://localhost:3307/dragons?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8",
+        FastAutoGenerator.create("jdbc:mysql://localhost:3306/dragons?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8",
                         "root", "123456")
                 .globalConfig(builder -> {
                     builder.author("aice") // 设置作者
@@ -27,7 +27,7 @@ public class CodeGenerator {
                 })
                 .strategyConfig(builder -> {
                     builder.addInclude("user", "tree_hole", "tree_hole_message", "tree_hole_message_visible",
-                                    "media", "media_visible", "tree_hole_blacklist") // 设置需要生成的表名
+                                    "media", "media_visible", "tree_hole_blacklist", "user_like_record") // 设置需要生成的表名
                             .entityBuilder()
                             .enableLombok() // 启用 Lombok
                             .enableTableFieldAnnotation() // 启用字段注解

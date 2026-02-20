@@ -140,6 +140,22 @@ public interface IMediaService extends IService<Media> {
     MediaAuditResult rejectMedia(List<Long> mediaIds, Long auditorUserId);
 
     /**
+     * 点赞：仅 state=0 的媒体可被点赞，每人每条仅可赞一次（重复请求幂等返回成功）。仅更新 Redis ZSET，定时回写 DB。
+     *
+     * @param mediaId       媒体ID
+     * @param currentUserId 当前用户ID（从JWT获取，必填）
+     */
+    void like(Long mediaId, Long currentUserId);
+
+    /**
+     * 取消点赞：未赞过则幂等成功。仅更新 Redis ZSET，定时回写 DB。
+     *
+     * @param mediaId       媒体ID
+     * @param currentUserId 当前用户ID（从JWT获取，必填）
+     */
+    void unlike(Long mediaId, Long currentUserId);
+
+    /**
      * 查询待审核媒体列表（仅管理员或作者可访问）
      *
      * @param page 页码（从1开始）

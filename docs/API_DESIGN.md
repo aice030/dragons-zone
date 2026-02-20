@@ -1474,7 +1474,41 @@ Authorization: Bearer <JWT_TOKEN>
 
 ---
 
-### 12.3 点赞数排行榜接口
+### 12.3 查询当前用户是否已赞某媒体接口（归属用户点赞记录）
+
+### GET /api/userLikeRecord/media/{mediaId}/status
+
+**功能说明**：查询当前登录用户是否已对指定媒体点赞。用于媒体详情页展示「已点赞」或「点赞」按钮：若已赞则显示取消点赞按钮，再次点击则取消点赞；若未赞则显示点赞按钮。需登录。本接口归属**用户点赞记录**系列（前缀 `/api/userLikeRecord`），与点赞/取消点赞的媒体接口（`/api/media/{id}/like`、`/api/media/{id}/unlike`）配合使用。
+
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| mediaId | Long | 是 | 媒体ID |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": true,
+  "timestamp": 1705564800000
+}
+```
+- `data: true` 已点赞，`data: false` 未点赞
+
+**失败响应**：未授权（401）、资源不存在（404）
+
+**业务逻辑**：
+1. 校验 JWT 并获取当前用户 ID
+2. 校验媒体存在且 state=0（仅已审核通过的媒体可查已赞状态）
+3. **查询流程**：先查 Redis bitmap `media:liked:{mediaId}`（GETBIT userId），位为 1 直接返回已赞；为 0 或 key 不存在则查 DB（user_like_record），写回 SETBIT 后返回
+4. 当前实现无分布式锁；锁能力已预留，可按需启用
+
+---
+
+### 12.4 点赞数排行榜接口
 
 ### GET /api/media/rank
 
@@ -1515,6 +1549,7 @@ Authorization: Bearer <JWT_TOKEN>
 
 **与 Redis_DESIGN.md 的对应**：
 - 点赞 → Redis ZINCRBY（all + category 双 key，Lua）；取消点赞 → 先判 score>0 再 ZINCRBY -1（Lua）
+- 查询是否已赞 → 先查 Redis（media:liked:{mediaId} bitmap GETBIT），未命中再查 DB 并写回 SETBIT
 - 排行榜 → ZREVRANGE 取 Top N；媒体删除/下架 → ZREM 三 key；审核通过 → 若 DB 有 like_count 则 ZADD 初始化
 - 列表/详情展示点赞数：先读 Redis ZSET score，不存在再用 media:core/DB 的 likeCount
 
@@ -1997,4 +2032,5 @@ Content-Type: application/json
 - 新增点赞与排行榜接口（第 12 节，按 Redis_DESIGN.md 排行榜设计）：
   - 点赞：`POST /api/media/{id}/like`（需登录，仅 state=0 可点赞；Redis 双 ZSET ZINCRBY）
   - 取消点赞：`POST /api/media/{id}/unlike`（需登录；Redis 先判 score>0 再 ZINCRBY -1）
+  - 查询是否已赞：`GET /api/userLikeRecord/media/{mediaId}/status`（归属用户点赞记录，需登录，先查 Redis 再查 DB 并写回缓存，返回 true/false）
   - 排行榜：`GET /api/media/rank`（游客可访问，query：category、size；返回按点赞数降序的 mediaIds）

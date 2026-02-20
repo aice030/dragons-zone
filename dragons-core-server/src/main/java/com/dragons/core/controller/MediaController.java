@@ -180,6 +180,42 @@ public class MediaController {
     }
 
     /**
+     * 点赞（需登录；仅 state=0 可点赞；重复请求幂等返回成功）
+     *
+     * POST /api/media/{id}/like
+     * Header: Authorization: Bearer <JWT>
+     */
+    @PostMapping("/{id}/like")
+    public Result<Void> like(
+            @PathVariable("id") Long mediaId,
+            @AuthenticationPrincipal JwtPrincipal principal
+    ) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        mediaService.like(mediaId, principal.getUserId());
+        return Result.success("点赞成功", null);
+    }
+
+    /**
+     * 取消点赞（需登录；未赞过则幂等成功）
+     *
+     * POST /api/media/{id}/unlike
+     * Header: Authorization: Bearer <JWT>
+     */
+    @PostMapping("/{id}/unlike")
+    public Result<Void> unlike(
+            @PathVariable("id") Long mediaId,
+            @AuthenticationPrincipal JwtPrincipal principal
+    ) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        mediaService.unlike(mediaId, principal.getUserId());
+        return Result.success("已取消点赞", null);
+    }
+
+    /**
      * 获取媒体详情
      * 支持游客模式：未登录也可访问，无需请求头。专区只用于列表筛选，详情无需传专区ID。
      */

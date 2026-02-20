@@ -6,11 +6,14 @@ import com.dragons.core.entity.Media;
 import com.dragons.core.dao.MediaMapper;
 import com.dragons.core.entity.MediaVisible;
 import com.dragons.core.entity.User;
+import com.dragons.core.entity.UserLikeRecord;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.cache.RedisCacheMediaCoreService;
 import com.dragons.core.cache.RedisCacheMediaListService;
+import com.dragons.core.cache.RedisCacheMediaLikeService;
 import com.dragons.core.service.IMediaService;
 import com.dragons.core.service.IMediaVisibleService;
+import com.dragons.core.service.IUserLikeRecordService;
 import com.dragons.core.service.IUserService;
 import com.dragons.core.storage.StorageService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -55,6 +58,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final IUserService userService;
     private final RedisCacheMediaCoreService redisCacheMediaCoreService;
     private final RedisCacheMediaListService redisCacheMediaListService;
+    private final RedisCacheMediaLikeService redisCacheMediaLikeService;
+    private final IUserLikeRecordService userLikeRecordService;
 
     /**
      * 封面预签名URL有效期（秒）
@@ -75,12 +80,16 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                             IMediaVisibleService mediaVisibleService,
                             IUserService userService,
                             RedisCacheMediaCoreService redisCacheMediaCoreService,
-                            RedisCacheMediaListService redisCacheMediaListService) {
+                            RedisCacheMediaListService redisCacheMediaListService,
+                            RedisCacheMediaLikeService redisCacheMediaLikeService,
+                            IUserLikeRecordService userLikeRecordService) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
         this.userService = userService;
         this.redisCacheMediaCoreService = redisCacheMediaCoreService;
         this.redisCacheMediaListService = redisCacheMediaListService;
+        this.redisCacheMediaLikeService = redisCacheMediaLikeService;
+        this.userLikeRecordService = userLikeRecordService;
     }
 
     @Override
@@ -353,7 +362,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
 
-        // 3) 删除 media_visible 成功后，再删除对象存储中的对象，保证即使出错也不会让用户感知到
+        // 第三步：删除 media_visible 成功后，再删除对象存储中的对象，保证即使出错也不会让用户感知到
         // 删除主文件
         if (storagePath != null && !storagePath.trim().isEmpty()) {
             try {
@@ -371,28 +380,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
 
-        // 第四步：删除相关列表缓存
-        // 删除媒体核心数据缓存
-        redisCacheMediaCoreService.evictMediaCore(mediaId);
-        
-        // 删除公共区列表缓存（zoneUserId=0）
-        if (category != null) {
-            redisCacheMediaListService.evictMediaList(0L, category);
-        }
-        
-        // 删除所有成员专区的列表缓存
-        if (zoneUserIds != null && !zoneUserIds.isEmpty()) {
-            for (Long zoneUserId : zoneUserIds) {
-                if (zoneUserId != null && category != null) {
-                    redisCacheMediaListService.evictMediaList(zoneUserId, category);
-                }
-            }
-        }
-        
-        // 删除"我的上传"列表缓存
-        if (uploaderId != null && category != null) {
-            redisCacheMediaListService.evictMyUploadList(uploaderId, category);
-        }
+        // 第四步：删除相关缓存（每项独立 try-catch，失败只打日志不中断删除，与 overcome.md「缓存删除失败不回滚数据库」一致）
+        evictMediaCacheForDelete(mediaId, category, uploaderId, zoneUserIds, true);
 
         // 删除缓存后，物理删除 media 记录
         this.removeById(mediaId);
@@ -405,21 +394,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         final List<Long> finalZoneUserIds = zoneUserIds;
         delayDeleteExecutor.schedule(() -> {
             try {
-                redisCacheMediaCoreService.evictMediaCore(idToEvict);
-                // 延迟删除列表缓存
-                if (finalCategory != null) {
-                    redisCacheMediaListService.evictMediaList(0L, finalCategory);
-                    if (finalZoneUserIds != null && !finalZoneUserIds.isEmpty()) {
-                        for (Long zoneUserId : finalZoneUserIds) {
-                            if (zoneUserId != null) {
-                                redisCacheMediaListService.evictMediaList(zoneUserId, finalCategory);
-                            }
-                        }
-                    }
-                    if (finalUploaderId != null) {
-                        redisCacheMediaListService.evictMyUploadList(finalUploaderId, finalCategory);
-                    }
-                }
+                evictMediaCacheForDelete(idToEvict, finalCategory, finalUploaderId, finalZoneUserIds, false);
                 log.info("delay double delete cache success mediaId={}", idToEvict);
             } catch (Exception e) {
                 log.warn("delay double delete cache failed mediaId={}", idToEvict, e);
@@ -646,9 +621,10 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 写时删除：媒体信息变更，删除缓存
         try {
             redisCacheMediaCoreService.evictMediaCore(mediaId);
-            // 如果原 state=0，删除列表缓存（因为会从列表中消失）
+            // 如果原 state=0，删除列表缓存与点赞相关缓存（媒体会从列表中消失且不再对外可赞）
             if (currentState != null && currentState == 0) {
                 evictMediaListCache(mediaId, media.getCategory());
+                redisCacheMediaLikeService.evictMediaLikeData(mediaId);
             }
         } catch (Exception e) {
             log.error("update media cache failed mediaId={} reason={}", mediaId, e.getMessage());
@@ -725,10 +701,11 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             // ignore
         }
         // 写时删除：封面变更，删除缓存
-        // updateCover 只允许 state=0 的媒体，更新后会变为 state=6，需要删除列表缓存
+        // updateCover 只允许 state=0 的媒体，更新后会变为 state=6，需要删除列表缓存与点赞相关缓存
         try {
             redisCacheMediaCoreService.evictMediaCore(mediaId);
             evictMediaListCache(mediaId, media.getCategory());
+            redisCacheMediaLikeService.evictMediaLikeData(mediaId);
         } catch (Exception e) {
             log.error("media cache update failed mediaId={}", mediaId);
         }
@@ -819,6 +796,62 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
         log.info("media visible rebuild success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);
+    }
+
+    @Override
+    public void like(Long mediaId, Long currentUserId) {
+        if (mediaId == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        if (currentUserId == null) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        Media media = this.getById(mediaId);
+        if (media == null || media.getState() == null || media.getState() != 0) {
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+        Byte category = media.getCategory();
+        if (category == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        // 先写 DB 再更新缓存，保证点赞关系强一致（overcome.md）
+        if (userLikeRecordService.existsByUserIdAndMediaId(currentUserId, mediaId)) {
+            return;
+        }
+        UserLikeRecord record = new UserLikeRecord();
+        record.setUserId(currentUserId);
+        record.setMediaId(mediaId);
+        record.setCreateTime(LocalDateTime.now());
+        try {
+            userLikeRecordService.save(record);
+        } catch (Exception e) {
+            log.warn("like: save user_like_record failed mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
+            return;
+        }
+        redisCacheMediaLikeService.like(mediaId, currentUserId, category);
+    }
+
+    @Override
+    public void unlike(Long mediaId, Long currentUserId) {
+        if (mediaId == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        if (currentUserId == null) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        Media media = this.getById(mediaId);
+        if (media == null || media.getState() == null || media.getState() != 0) {
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+        Byte category = media.getCategory();
+        if (category == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        // 先删 DB 再更新缓存，保证点赞关系强一致（overcome.md）
+        boolean removed = userLikeRecordService.removeByUserIdAndMediaId(currentUserId, mediaId);
+        if (removed) {
+            redisCacheMediaLikeService.unlike(mediaId, currentUserId, category);
+        }
     }
 
     private boolean saveWithRetry(Media media) {
@@ -1113,6 +1146,82 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
         
         return "images/covers/" + datePath + "/" + uuid + extension;
+    }
+
+    /**
+     * 删除媒体时使用的缓存清理：core、列表（先 all 再 category）、我的上传、点赞。
+     * 供 delete 第一次删除与延迟双删共用，保证逻辑一致。
+     *
+     * @param mediaId         媒体ID（仅用于日志）
+     * @param category        媒体分类，null 时只删 all 维度
+     * @param uploaderId      上传者ID
+     * @param zoneUserIds     可见专区ID列表
+     * @param perCallTryCatch true=每项 evict 单独 try-catch（第一次删除）；false=不包 try-catch，由调用方统一 catch（延迟双删）
+     */
+    private void evictMediaCacheForDelete(Long mediaId, Byte category, Long uploaderId, List<Long> zoneUserIds, boolean perCallTryCatch) {
+        Runnable evictCore = () -> redisCacheMediaCoreService.evictMediaCore(mediaId);
+        Runnable evictLike = () -> redisCacheMediaLikeService.evictMediaLikeData(mediaId);
+        if (perCallTryCatch) {
+            try { evictCore.run(); } catch (Exception e) { log.warn("delete: evictMediaCore failed mediaId={} error={}", mediaId, e.getMessage()); }
+        } else {
+            evictCore.run();
+        }
+        // 列表：先 all，再具体 category
+        evictMediaListForDelete(mediaId, 0L, null, perCallTryCatch);
+        if (category != null) {
+            evictMediaListForDelete(mediaId, 0L, category, perCallTryCatch);
+        }
+        if (zoneUserIds != null && !zoneUserIds.isEmpty()) {
+            for (Long zoneUserId : zoneUserIds) {
+                if (zoneUserId != null) {
+                    evictMediaListForDelete(mediaId, zoneUserId, null, perCallTryCatch);
+                    if (category != null) {
+                        evictMediaListForDelete(mediaId, zoneUserId, category, perCallTryCatch);
+                    }
+                }
+            }
+        }
+        if (uploaderId != null) {
+            evictMyUploadListForDelete(mediaId, uploaderId, null, perCallTryCatch);
+            if (category != null) {
+                evictMyUploadListForDelete(mediaId, uploaderId, category, perCallTryCatch);
+            }
+        }
+        if (perCallTryCatch) {
+            try { evictLike.run(); } catch (Exception e) { log.warn("delete: evictMediaLikeData failed mediaId={} error={}", mediaId, e.getMessage()); }
+        } else {
+            evictLike.run();
+        }
+    }
+
+    private void evictMediaListForDelete(Long mediaId, Long zoneUserId, Byte category, boolean perCallTryCatch) {
+        Runnable r = () -> redisCacheMediaListService.evictMediaList(zoneUserId, category);
+        if (perCallTryCatch) {
+            try {
+                r.run();
+            } catch (Exception e) {
+                if (zoneUserId == 0L) {
+                    log.warn("delete: evictMediaList(0) failed mediaId={} category={} error={}", mediaId, category, e.getMessage());
+                } else {
+                    log.warn("delete: evictMediaList(zone) failed mediaId={} zoneUserId={} category={} error={}", mediaId, zoneUserId, category, e.getMessage());
+                }
+            }
+        } else {
+            r.run();
+        }
+    }
+
+    private void evictMyUploadListForDelete(Long mediaId, Long uploaderId, Byte category, boolean perCallTryCatch) {
+        Runnable r = () -> redisCacheMediaListService.evictMyUploadList(uploaderId, category);
+        if (perCallTryCatch) {
+            try {
+                r.run();
+            } catch (Exception e) {
+                log.warn("delete: evictMyUploadList{} failed mediaId={} error={}", category == null ? "(all)" : "", mediaId, e.getMessage());
+            }
+        } else {
+            r.run();
+        }
     }
 
     /**

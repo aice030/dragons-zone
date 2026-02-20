@@ -205,3 +205,21 @@
 
 6. **与 media:core 的 likeCount**
    - `media:core` 里缓存的 `likeCount` 来自 DB，在两次同步之间会落后于 Redis 排行榜；因此列表/详情展示点赞数时，先读 Redis ZSET 中的 score，若不存在再用缓存的 likeCount。
+
+### 查询点赞记录（是否已赞）
+
+用于「查询当前用户是否已赞某媒体」接口（如媒体详情页展示已赞/未赞按钮）：先查 Redis，缓存未命中再查数据库。
+
+#### Redis 结构
+- **Key 格式**：`media:liked:{mediaId}`
+- **类型**：位图（BITMAP，底层为 string）
+- **语义**：offset = userId，bit = 1 表示该用户已赞；适合 userId 连续且范围有界的场景，内存固定约 ceil(maxUserId/8) 字节/媒体。
+
+#### 查询流程
+1. **先查 Redis**：对 `media:liked:{mediaId}` 执行 `GETBIT media:liked:{mediaId} {userId}`，若为 1 则已赞，返回 true；若为 0 则未赞或 key 不存在。
+2. **缓存未命中再查 DB**：若需与数据库「用户-媒体点赞关系表」一致（如存在该表且定时同步），则查 DB 判断该用户是否曾点赞该媒体；DB 命中则返回 true，否则返回 false。可选：DB 命中且 Redis 中该位为 0 时，可回写 Redis（SETBIT offset userId 1）以预热缓存。
+
+#### 与写操作的一致
+- **点赞**：对 `media:liked:{mediaId}` 执行 `SETBIT media:liked:{mediaId} {userId} 1`（与 ZSET ZINCRBY 同时进行），保证后续查询命中 Redis。
+- **取消点赞**：对 `media:liked:{mediaId}` 执行 `SETBIT media:liked:{mediaId} {userId} 0`（与 ZSET ZINCRBY -1 同时进行）。
+- **媒体删除/下架**：从排行榜 ZSET 中 ZREM 该 mediaId 时，同时 `DEL media:liked:{mediaId}`，避免脏读。

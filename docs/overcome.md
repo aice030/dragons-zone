@@ -382,3 +382,38 @@
 - 获取锁成功后启动后台线程，每2秒自动续期
 - 锁TTL是5秒，每2秒续期一次，确保锁不会过期
 - 在 finally 块中优雅关闭续期线程（等待最多1秒）
+
+---
+
+## 点赞与查询已赞设计
+
+### 设计概要
+- **排行榜**：Redis ZSET（`media:rank:all` / `media:rank:0` / `media:rank:1`），member=mediaId，score=点赞数；点赞/取消点赞时 ZINCRBY，定时回写 DB。
+- **是否已赞**：Redis bitmap `media:liked:{mediaId}`，offset=userId，bit=1 表示已赞；每人每媒体一把 bit，每媒体一个 key。
+- **查询流程**：先 GETBIT，为 1 直接返回已赞；为 0（含 key 不存在时 Redis 也返回 0）则查 DB（user_like_record），再 SETBIT 写回后返回。当前实现**无分布式锁**。
+- **接口归属**：查询是否已赞归属用户点赞记录，路径 `GET /api/userLikeRecord/media/{mediaId}/status`。
+
+### 点赞/取消点赞实现流程
+
+**点赞**
+- **ZSET**：对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY 1，对应 mediaId 的 score +1；以缓存为主，定期落库。
+- **用户与 media 点赞唯一性**：由位图控制一人一赞。**先写数据库**（插入 user_like_record），**再更新缓存**（SETBIT 1），保证点赞关系的强一致性。
+
+**取消点赞**
+- **ZSET**：对上述两 key 执行 ZINCRBY -1（仅当 score>0，Lua 保证），对应 mediaId 的 score -1；以缓存为主，定期落库。
+- **用户点赞关系**：**先删除数据库中该条记录**（user_like_record），**再更新缓存**（SETBIT 0）。
+
+### 缓存恢复策略（Redis 宕机后）
+- Redis 宕机导致 ZSET 与 bitmap 丢失时，以 **user_like_record** 为数据源恢复缓存。
+- **ZSET 恢复**：按 media_id 聚合统计每条 media 的点赞数，对 `media:rank:all` 与 `media:rank:{category}` 执行 ZADD（mediaId, count）。
+- **Bitmap 恢复**：按 media_id 分组，对每个 mediaId 根据其 user_like_record 中的 user_id 列表，对 `media:liked:{mediaId}` 执行 SETBIT userId 1。
+- 恢复任务可在 Redis 恢复后由定时任务或运维脚本触发执行。
+
+### 为何无法区分「key 不存在」与「该位为 0」
+- Redis 规定：对不存在的 key 执行 GETBIT 任意 offset 均返回 0。故单次 GETBIT 无法区分「key 不存在」与「key 存在但该用户位为 0」，只能统一按缓存未命中处理（查 DB + 写回）。
+
+### 分布式锁方案（未实现）：仅 key 不存在时加锁
+- **思路**：只有「需要创建 bitmap」（key 不存在）时才加锁，避免多用户同时为同一媒体创建 key 造成击穿；若 key 已存在、仅该用户位为 0，则不加锁直接查 DB 写回，减少锁竞争。
+- **实现前提**：在 GETBIT 得 0 后多一次 **EXISTS media:liked:{mediaId}**。EXISTS=0 表示 key 不存在 → 加锁、双重检查、查 DB + SETBIT、解锁；EXISTS=1 表示 key 已存在 → 不加锁，直接查 DB + SETBIT。
+- **代价**：每次 cache miss 多一次 Redis 往返（EXISTS），查询路径略慢。
+- **取舍**：在 QPS/并发不高时，当前采用无锁实现；锁能力（tryLockLiked/unlockLiked/renewLockLiked）已预留，若后续需要可接入「EXISTS + 仅 key 不存在时加锁」方案，保证锁职责清晰。
