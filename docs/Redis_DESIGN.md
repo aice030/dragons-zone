@@ -174,4 +174,34 @@
 **列表查询**：空列表也写入缓存（TTL: 300秒），Value: `{"total": 0, "mediaIds": []}`
 
 
-## 排行榜
+## 排行榜（点赞数）
+
+### 设计要点
+- 使用 Redis ZSET 存储点赞数并排序：member = mediaId，score = likeCount（仅记录 media id，与列表缓存一致）。
+- 按分类分桶：`category=null`（全部）、`0`（图片）、`1`（视频）各一个 ZSET，便于「分类 TopN」查询。
+- 点赞/取消点赞时实时更新 Redis（ZINCRBY），再异步或定期回写 DB，保证排行榜实时、DB 最终一致。
+
+### 需明确与建议
+
+1. **Key 格式**（建议）
+   - `media:rank:all`：全部媒体按点赞数排序
+   - `media:rank:0`：图片
+   - `media:rank:1`：视频  
+   一次点赞需更新 2 个 ZSET：`media:rank:all` + `media:rank:{category}`（Lua 脚本保证原子性）。
+
+2. **取数范围**
+   - 文档写「前二十」：建议改为「前 N，默认 20」，接口用 `size` 参数，实现用 `ZREVRANGE key 0 (size-1)` 即可支持分页/更多。
+
+3. **取消点赞与边界**
+   - 取消点赞：先判断当前 score > 0 再执行 `ZINCRBY -1`，保证 score 不为负（Lua 脚本保证原子性）。
+
+4. **与 media 生命周期一致**
+   - 媒体删除（state=5）或下架：从 3 个 ZSET（all、0、1）中均 `ZREM` 该 mediaId（Lua 脚本一次对 3 个 key 执行 ZREM，避免只删部分）。
+   - 审核通过（state 6→0）：若 DB 已有 like_count，需用该值对 `media:rank:all` 与 `media:rank:{category}` 执行 `ZADD`（Lua 脚本保证双 key 同时写入，与点赞一致）。
+
+5. **回写 DB**
+   - 每 5 分钟扫 ZSET 变更写回 `media.like_count`、`media.like_count_update_time`。
+   - 接受redis宕机数据丢失，后续可能引入MQ
+
+6. **与 media:core 的 likeCount**
+   - `media:core` 里缓存的 `likeCount` 来自 DB，在两次同步之间会落后于 Redis 排行榜；因此列表/详情展示点赞数时，先读 Redis ZSET 中的 score，若不存在再用缓存的 likeCount。

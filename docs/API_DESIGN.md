@@ -1394,6 +1394,132 @@ Authorization: Bearer <JWT_TOKEN>
 
 ---
 
+## 12. 点赞与排行榜接口
+
+按 Redis_DESIGN.md 排行榜设计：点赞/取消点赞实时更新 Redis ZSET，定时回写 DB；排行榜读 Redis 取 Top N。
+
+### 12.1 点赞接口
+
+### POST /api/media/{id}/like
+
+**功能说明**：当前用户对指定媒体点赞。需登录；同一用户对同一媒体仅可点赞一次（重复请求幂等或返回已点赞）。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| id | Long | 是 | 媒体ID |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "点赞成功",
+  "data": null,
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：
+- 未授权（401）
+- 资源不存在（404）：媒体不存在或非 state=0（未审核通过不可点赞）
+- 已点赞（可选 4xxx）：若采用“每人每条仅能点一次”则返回已点赞状态，由产品决定是否 200 幂等或 4xxx
+
+**业务逻辑**：
+1. 校验 JWT 并获取当前用户 ID
+2. 校验媒体存在且 state=0（仅已审核通过的媒体可被点赞）
+3. 若需防重复：检查当前用户是否已对该媒体点赞，已赞则幂等返回成功或返回“已点赞”
+4. 更新 Redis：对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY 1（Lua 双 key 原子）
+5. 可选：落库“用户-媒体”点赞关系（用于防重复、取消点赞时校验）；若仅用 Redis 记录，需在 Redis 中维护“用户已赞集合”等
+
+---
+
+### 12.2 取消点赞接口
+
+### POST /api/media/{id}/unlike
+
+**功能说明**：当前用户取消对指定媒体的点赞。需登录；未点赞过则幂等成功。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**路径参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| id | Long | 是 | 媒体ID |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "已取消点赞",
+  "data": null,
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：未授权（401）、资源不存在（404）
+
+**业务逻辑**：
+1. 校验 JWT 并获取当前用户 ID
+2. 校验媒体存在且 state=0
+3. 若存在“用户-媒体”点赞关系则删除；若从未点赞则幂等返回成功
+4. 更新 Redis：仅当当前 score > 0 时对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY -1（Lua 原子，保证不为负）
+
+---
+
+### 12.3 点赞数排行榜接口
+
+### GET /api/media/rank
+
+**功能说明**：按点赞数从高到低返回媒体 ID 列表（Top N），用于热度榜。支持游客模式，无需请求头。
+
+**请求头**：无需（游客可访问）；若已登录也可携带 JWT。
+
+**查询参数**：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| category | Byte | 否 | 类型筛选：不传或 all=全部，0=图片，1=视频 |
+| size | Integer | 否 | 返回条数，默认 20，最大建议 100 |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": {
+    "mediaIds": [3, 1, 5, 2, 4]
+  },
+  "timestamp": 1705564800000
+}
+```
+
+**说明**：
+- `mediaIds` 按点赞数从高到低排序；不足 N 条时返回实际条数
+- 仅包含 state=0 的媒体（实现时从 Redis ZSET 取 id 后需过滤已删除/未审核，或在回写/生命周期时已从 ZSET 移除不可见媒体）
+- 前端可根据 mediaIds 再调媒体详情或列表接口拉取封面、标题等；或本接口扩展为直接返回列表项（含 id、coverUrl、likeCount 等），见实现约定
+
+**业务逻辑**：
+1. 根据 category 确定 Redis key：`media:rank:all` 或 `media:rank:0` / `media:rank:1`
+2. 执行 ZREVRANGE key 0 (size-1) 得到 mediaId 列表
+3. 可选：过滤 state!=0 或已删除的媒体（若 Redis 与 DB 已通过删除/下架 ZREM 保持一致可省略）
+4. 返回 mediaIds；若需带点赞数，可再 ZREVRANGE WITHSCORES 返回 (id, likeCount) 列表
+
+---
+
+**与 Redis_DESIGN.md 的对应**：
+- 点赞 → Redis ZINCRBY（all + category 双 key，Lua）；取消点赞 → 先判 score>0 再 ZINCRBY -1（Lua）
+- 排行榜 → ZREVRANGE 取 Top N；媒体删除/下架 → ZREM 三 key；审核通过 → 若 DB 有 like_count 则 ZADD 初始化
+- 列表/详情展示点赞数：先读 Redis ZSET score，不存在再用 media:core/DB 的 likeCount
+
+---
+
 ## 树洞功能接口设计（MVP）
 
 ### 树洞主人说明（产品设定）
@@ -1866,3 +1992,9 @@ Content-Type: application/json
 - 待审核列表接口（`GET /api/media/audit/pending`）：
   - 新增 `category` 查询参数（可选）：不传=全部，0=图片，1=视频，后端筛选，复用 `idx_media_state_category_update_time` 索引
   - 前端 ResourceManage 资源审核筛选由前端过滤改为后端筛选，与 MediaBrowse、资源管理列表统一
+
+### 2026-02-19
+- 新增点赞与排行榜接口（第 12 节，按 Redis_DESIGN.md 排行榜设计）：
+  - 点赞：`POST /api/media/{id}/like`（需登录，仅 state=0 可点赞；Redis 双 ZSET ZINCRBY）
+  - 取消点赞：`POST /api/media/{id}/unlike`（需登录；Redis 先判 score>0 再 ZINCRBY -1）
+  - 排行榜：`GET /api/media/rank`（游客可访问，query：category、size；返回按点赞数降序的 mediaIds）

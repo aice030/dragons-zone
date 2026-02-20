@@ -7,7 +7,8 @@ import com.dragons.core.dao.MediaMapper;
 import com.dragons.core.entity.MediaVisible;
 import com.dragons.core.entity.User;
 import com.dragons.core.exception.BusinessException;
-import com.dragons.core.cache.MediaRedisCacheService;
+import com.dragons.core.cache.RedisCacheMediaCoreService;
+import com.dragons.core.cache.RedisCacheMediaListService;
 import com.dragons.core.service.IMediaService;
 import com.dragons.core.service.IMediaVisibleService;
 import com.dragons.core.service.IUserService;
@@ -52,7 +53,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final StorageService storageService;
     private final IMediaVisibleService mediaVisibleService;
     private final IUserService userService;
-    private final MediaRedisCacheService mediaRedisCacheService;
+    private final RedisCacheMediaCoreService redisCacheMediaCoreService;
+    private final RedisCacheMediaListService redisCacheMediaListService;
 
     /**
      * 封面预签名URL有效期（秒）
@@ -72,11 +74,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     public MediaServiceImpl(StorageService storageService,
                             IMediaVisibleService mediaVisibleService,
                             IUserService userService,
-                            MediaRedisCacheService mediaRedisCacheService) {
+                            RedisCacheMediaCoreService redisCacheMediaCoreService,
+                            RedisCacheMediaListService redisCacheMediaListService) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
         this.userService = userService;
-        this.mediaRedisCacheService = mediaRedisCacheService;
+        this.redisCacheMediaCoreService = redisCacheMediaCoreService;
+        this.redisCacheMediaListService = redisCacheMediaListService;
     }
 
     @Override
@@ -198,7 +202,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 注意：新上传的媒体为 state=6（待审核），不会出现在公共区/专区列表中，所以不需要删除公共区/专区列表缓存
         if (category != null && uploaderUserId != null) {
             try {
-                mediaRedisCacheService.evictMyUploadList(uploaderUserId, category);
+                redisCacheMediaListService.evictMyUploadList(uploaderUserId, category);
             } catch (Exception e) {
                 log.warn("evict my upload list cache failed uploaderId={} category={} error={}", 
                         uploaderUserId, category, e.getMessage());
@@ -369,25 +373,25 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
         // 第四步：删除相关列表缓存
         // 删除媒体核心数据缓存
-        mediaRedisCacheService.evictMediaCore(mediaId);
+        redisCacheMediaCoreService.evictMediaCore(mediaId);
         
         // 删除公共区列表缓存（zoneUserId=0）
         if (category != null) {
-            mediaRedisCacheService.evictMediaList(0L, category);
+            redisCacheMediaListService.evictMediaList(0L, category);
         }
         
         // 删除所有成员专区的列表缓存
         if (zoneUserIds != null && !zoneUserIds.isEmpty()) {
             for (Long zoneUserId : zoneUserIds) {
                 if (zoneUserId != null && category != null) {
-                    mediaRedisCacheService.evictMediaList(zoneUserId, category);
+                    redisCacheMediaListService.evictMediaList(zoneUserId, category);
                 }
             }
         }
         
         // 删除"我的上传"列表缓存
         if (uploaderId != null && category != null) {
-            mediaRedisCacheService.evictMyUploadList(uploaderId, category);
+            redisCacheMediaListService.evictMyUploadList(uploaderId, category);
         }
 
         // 删除缓存后，物理删除 media 记录
@@ -401,19 +405,19 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         final List<Long> finalZoneUserIds = zoneUserIds;
         delayDeleteExecutor.schedule(() -> {
             try {
-                mediaRedisCacheService.evictMediaCore(idToEvict);
+                redisCacheMediaCoreService.evictMediaCore(idToEvict);
                 // 延迟删除列表缓存
                 if (finalCategory != null) {
-                    mediaRedisCacheService.evictMediaList(0L, finalCategory);
+                    redisCacheMediaListService.evictMediaList(0L, finalCategory);
                     if (finalZoneUserIds != null && !finalZoneUserIds.isEmpty()) {
                         for (Long zoneUserId : finalZoneUserIds) {
                             if (zoneUserId != null) {
-                                mediaRedisCacheService.evictMediaList(zoneUserId, finalCategory);
+                                redisCacheMediaListService.evictMediaList(zoneUserId, finalCategory);
                             }
                         }
                     }
                     if (finalUploaderId != null) {
-                        mediaRedisCacheService.evictMyUploadList(finalUploaderId, finalCategory);
+                        redisCacheMediaListService.evictMyUploadList(finalUploaderId, finalCategory);
                     }
                 }
                 log.info("delay double delete cache success mediaId={}", idToEvict);
@@ -430,7 +434,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
         MediaDetailResult result = new MediaDetailResult();
         // 先查缓存，命中则从 Media 实体转换为 MediaDetailResult
-        Media cachedMedia = mediaRedisCacheService.getMediaCore(mediaId);
+        Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
         if (cachedMedia != null) {
             // 缓存中仅存储 state=0（已审核通过）的媒体，游客/任何人可查看
             return convertToMediaDetailResult(cachedMedia);
@@ -445,7 +449,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         try {
             // 1.1 尝试获取分布式锁（最多重试3次）
             for (int retryCount = 0; retryCount < 3; retryCount++) {
-                lockAcquired = mediaRedisCacheService.tryLockMediaCore(mediaId, requestId);
+                lockAcquired = redisCacheMediaCoreService.tryLockMediaCore(mediaId, requestId);
                 if (lockAcquired) {
                     // 获取锁成功，启动后台线程自动续期（WatchDog机制）
                     // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
@@ -457,7 +461,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                     final Long finalMediaId = mediaId;
                     final String finalRequestId = requestId;
                     lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                        boolean renewed = mediaRedisCacheService.renewLockMediaCore(finalMediaId, finalRequestId);
+                        boolean renewed = redisCacheMediaCoreService.renewLockMediaCore(finalMediaId, finalRequestId);
                         if (!renewed) {
                             log.warn("lock renewal failed, lock may have been released mediaId={} requestId={}", finalMediaId, finalRequestId);
                         }
@@ -474,7 +478,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                     break;
                 }
                 // 1.3 重试查询缓存，可能其他线程已经写入
-                cachedMedia = mediaRedisCacheService.getMediaCore(mediaId);
+                cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
                 if (cachedMedia != null) {
                     // 1.4 缓存已命中，直接返回
                     return convertToMediaDetailResult(cachedMedia);
@@ -483,7 +487,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             
             if (lockAcquired) {
                 // 2.获取到分布式锁后，再次查询缓存（双重检测）
-                cachedMedia = mediaRedisCacheService.getMediaCore(mediaId);
+                cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
                 if (cachedMedia != null) {
                     // 其他线程已经写入缓存，直接返回
                     return convertToMediaDetailResult(cachedMedia);
@@ -493,7 +497,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 Media media = this.getById(mediaId);
                 if (media == null || media.getState() == null) {
                     // 3.1 防止缓存穿透：写入空值缓存
-                    mediaRedisCacheService.putNullValue(mediaId);
+                    redisCacheMediaCoreService.putNullValue(mediaId);
                     throw new BusinessException(ResponseCode.NOT_FOUND);
                 }
 
@@ -519,7 +523,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                     if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
                         log.warn("getMediaDetail denied because media has not got approved mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
                         // 防止缓存穿透：对于无权限访问的数据，也写入空值缓存
-                        mediaRedisCacheService.putNullValue(mediaId);
+                        redisCacheMediaCoreService.putNullValue(mediaId);
                         throw new BusinessException(ResponseCode.NOT_FOUND);
                     }
                 }
@@ -534,7 +538,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // 将 coverUrl 设置到 Media 对象中，一起缓存
                 if (media.getState() != null && media.getState() == 0) {
                     media.setCoverUrl(result.coverUrl);
-                    mediaRedisCacheService.putMediaCore(mediaId, media);
+                    redisCacheMediaCoreService.putMediaCore(mediaId, media);
                 }
             } else {
                 // 获取锁失败，降级查询数据库（后续可以添加重试逻辑）
@@ -588,7 +592,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
             // 只有获取到锁才释放（使用 requestId 确保只释放自己的锁）
             if (lockAcquired) {
-                mediaRedisCacheService.unlockMediaCore(mediaId, requestId);
+                redisCacheMediaCoreService.unlockMediaCore(mediaId, requestId);
             }
         }
 
@@ -641,7 +645,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
         // 写时删除：媒体信息变更，删除缓存
         try {
-            mediaRedisCacheService.evictMediaCore(mediaId);
+            redisCacheMediaCoreService.evictMediaCore(mediaId);
             // 如果原 state=0，删除列表缓存（因为会从列表中消失）
             if (currentState != null && currentState == 0) {
                 evictMediaListCache(mediaId, media.getCategory());
@@ -723,7 +727,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 写时删除：封面变更，删除缓存
         // updateCover 只允许 state=0 的媒体，更新后会变为 state=6，需要删除列表缓存
         try {
-            mediaRedisCacheService.evictMediaCore(mediaId);
+            redisCacheMediaCoreService.evictMediaCore(mediaId);
             evictMediaListCache(mediaId, media.getCategory());
         } catch (Exception e) {
             log.error("media cache update failed mediaId={}", mediaId);
@@ -1127,13 +1131,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             List<Long> zoneUserIds = mediaVisibleService.getVisibleUserIdsByMediaId(mediaId);
             
             // 删除公共区列表缓存（zoneUserId=0）
-            mediaRedisCacheService.evictMediaList(0L, category);
+            redisCacheMediaListService.evictMediaList(0L, category);
             
             // 删除所有成员专区的列表缓存
             if (zoneUserIds != null && !zoneUserIds.isEmpty()) {
                 for (Long zoneUserId : zoneUserIds) {
                     if (zoneUserId != null) {
-                        mediaRedisCacheService.evictMediaList(zoneUserId, category);
+                        redisCacheMediaListService.evictMediaList(zoneUserId, category);
                     }
                 }
             }
@@ -1205,7 +1209,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // 审核通过会改变 state（6→0），删除该媒体缓存和列表缓存
                 // state 变为 0 后，会出现在公共区/专区列表中，需要删除列表缓存以刷新
                 try {
-                    mediaRedisCacheService.evictMediaCore(media.getId());
+                    redisCacheMediaCoreService.evictMediaCore(media.getId());
                     evictMediaListCache(media.getId(), media.getCategory());
                 } catch (Exception e) {
                     log.warn("after approve media cache delete failed error={}", e.getMessage());
@@ -1263,7 +1267,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // 审核驳回会改变 state（6→7），删除该媒体缓存和列表缓存
                 // 原 state=6，变为 state=7 后，会从公共区/专区列表中消失，需要删除列表缓存
                 try {
-                    mediaRedisCacheService.evictMediaCore(media.getId());
+                    redisCacheMediaCoreService.evictMediaCore(media.getId());
                     evictMediaListCache(media.getId(), media.getCategory());
                 } catch (Exception e) {
                     log.warn("after reject media cache delete failed error={}", e.getMessage());

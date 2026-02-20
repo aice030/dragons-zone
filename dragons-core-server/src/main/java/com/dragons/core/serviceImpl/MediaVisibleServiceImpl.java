@@ -12,7 +12,8 @@ import com.dragons.core.service.IMediaVisibleService;
 import com.dragons.core.service.IMediaService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dragons.core.storage.StorageService;
-import com.dragons.core.cache.MediaRedisCacheService;
+import com.dragons.core.cache.RedisCacheMediaCoreService;
+import com.dragons.core.cache.RedisCacheMediaListService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -38,16 +39,19 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
 
     private final MediaMapper mediaMapper;
     private final StorageService storageService;
-    private final MediaRedisCacheService mediaRedisCacheService;
+    private final RedisCacheMediaCoreService redisCacheMediaCoreService;
+    private final RedisCacheMediaListService redisCacheMediaListService;
     private final IMediaService mediaService;
 
     @Autowired
     public MediaVisibleServiceImpl(MediaMapper mediaMapper, StorageService storageService,
-                                   MediaRedisCacheService mediaRedisCacheService,
+                                   RedisCacheMediaCoreService redisCacheMediaCoreService,
+                                   RedisCacheMediaListService redisCacheMediaListService,
                                    IMediaService mediaService) {
         this.mediaMapper = mediaMapper;
         this.storageService = storageService;
-        this.mediaRedisCacheService = mediaRedisCacheService;
+        this.redisCacheMediaCoreService = redisCacheMediaCoreService;
+        this.redisCacheMediaListService = redisCacheMediaListService;
         this.mediaService = mediaService;
     }
 
@@ -67,7 +71,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
 
         // 先查缓存：获取媒体列表（包含total和mediaIds）
-        MediaListCacheValue cachedList = mediaRedisCacheService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
+        MediaListCacheValue cachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
         
         List<Media> records;
         long total;
@@ -79,7 +83,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             log.info("listMedia cache hit zoneUserId={} category={} page={} size={} total={} cachedIds={}", 
                     zoneUserIdForCache, category, safePage, safeSize, cachedList.getTotal(), cachedMediaIds.size());
             
-            Map<Long, Media> cachedMediaMap = mediaRedisCacheService.batchGetMediaCore(cachedMediaIds);
+            Map<Long, Media> cachedMediaMap = redisCacheMediaCoreService.batchGetMediaCore(cachedMediaIds);
 
             // 找出未命中的ID，后续从DB加载（需要加分布式锁保护）
             List<Long> missingIds = cachedMediaIds.stream()
@@ -115,7 +119,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             try {
                 // 1. 尝试获取分布式锁（最多重试3次）
                 for (int retryCount = 0; retryCount < 3; retryCount++) {
-                    lockAcquired = mediaRedisCacheService.tryLockMediaList(zoneUserIdForCache, category, safePage, safeSize, requestId);
+                    lockAcquired = redisCacheMediaListService.tryLockMediaList(zoneUserIdForCache, category, safePage, safeSize, requestId);
                     if (lockAcquired) {
                         // 获取锁成功，启动后台线程自动续期（WatchDog机制）
                         // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
@@ -130,7 +134,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                             return t;
                         });
                         lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                            boolean renewed = mediaRedisCacheService.renewLockMediaList(finalZoneUserIdForCache, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
+                            boolean renewed = redisCacheMediaListService.renewLockMediaList(finalZoneUserIdForCache, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
                             if (!renewed) {
                                 log.warn("lock renewal failed for media list, lock may have been released zoneUserId={} category={} page={} size={} requestId={}", 
                                         finalZoneUserIdForCache, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
@@ -148,7 +152,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                         break;
                     }
                     // 重试查询缓存，可能其他线程已经写入
-                    MediaListCacheValue retryCachedList = mediaRedisCacheService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
+                    MediaListCacheValue retryCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
                     MediaPageResult retryResult = buildResultFromCache(retryCachedList, zoneUserIdForCache, safePage, safeSize, category);
                     if (retryResult != null) {
                         // 缓存已命中，直接返回（不需要释放锁，因为没获取到）
@@ -158,7 +162,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 
                 if (lockAcquired) {
                     // 2. 获取到分布式锁后，再次查询缓存（双重检测）
-                    MediaListCacheValue doubleCheckCachedList = mediaRedisCacheService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
+                    MediaListCacheValue doubleCheckCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
                     MediaPageResult doubleCheckResult = buildResultFromCache(doubleCheckCachedList, zoneUserIdForCache, safePage, safeSize, category);
                     if (doubleCheckResult != null) {
                         // 其他线程已经写入缓存，直接返回（需要释放锁）
@@ -197,7 +201,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 }
                 // 释放分布式锁
                 if (lockAcquired) {
-                    mediaRedisCacheService.unlockMediaList(zoneUserIdForCache, category, safePage, safeSize, requestId);
+                    redisCacheMediaListService.unlockMediaList(zoneUserIdForCache, category, safePage, safeSize, requestId);
                 }
             }
         }
@@ -223,7 +227,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
         
         List<Long> cachedMediaIds = cachedList.getMediaIds();
-        Map<Long, Media> cachedMediaMap = mediaRedisCacheService.batchGetMediaCore(cachedMediaIds);
+        Map<Long, Media> cachedMediaMap = redisCacheMediaCoreService.batchGetMediaCore(cachedMediaIds);
         
         // 找出未命中的ID，从DB加载（需要加分布式锁保护）
         List<Long> missingIds = cachedMediaIds.stream()
@@ -320,18 +324,18 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                     .collect(Collectors.toList());
             
             // 写入列表缓存（包含total和mediaIds）
-            mediaRedisCacheService.putMediaList(zoneUserIdForCache, category, safePage, safeSize, total, mediaIds);
+            redisCacheMediaListService.putMediaList(zoneUserIdForCache, category, safePage, safeSize, total, mediaIds);
             
             // 批量写入 media:core 缓存（仅 state=0）
             // 注意：putMediaCore 内部已有异常处理，无需外层 try-catch
             for (Media media : records) {
                 if (media.getState() != null && media.getState() == 0) {
-                    mediaRedisCacheService.putMediaCore(media.getId(), media);
+                    redisCacheMediaCoreService.putMediaCore(media.getId(), media);
                 }
             }
         } else {
             // 查询结果为空，写入空列表缓存（防止缓存穿透）
-            mediaRedisCacheService.putMediaList(zoneUserIdForCache, category, safePage, safeSize, 0L, Collections.emptyList());
+            redisCacheMediaListService.putMediaList(zoneUserIdForCache, category, safePage, safeSize, 0L, Collections.emptyList());
         }
     }
 
@@ -389,7 +393,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
         
         List<Long> cachedMediaIds = cachedList.getMediaIds();
-        Map<Long, Media> cachedMediaMap = mediaRedisCacheService.batchGetMediaCore(cachedMediaIds);
+        Map<Long, Media> cachedMediaMap = redisCacheMediaCoreService.batchGetMediaCore(cachedMediaIds);
         
         // 找出未命中的ID，从DB加载（需要加分布式锁保护）
         List<Long> missingIds = cachedMediaIds.stream()
@@ -447,17 +451,17 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                     .collect(Collectors.toList());
             
             // 写入列表缓存（包含total和mediaIds，排除 state=5 的所有媒体ID）
-            mediaRedisCacheService.putMyUploadList(uploaderUserId, category, safePage, safeSize, total, mediaIds);
+            redisCacheMediaListService.putMyUploadList(uploaderUserId, category, safePage, safeSize, total, mediaIds);
             
             // 批量写入 media:core 缓存（仅 state=0）
             for (Media media : records) {
                 if (media.getState() != null && media.getState() == 0) {
-                    mediaRedisCacheService.putMediaCore(media.getId(), media);
+                    redisCacheMediaCoreService.putMediaCore(media.getId(), media);
                 }
             }
         } else {
             // 查询结果为空，写入空列表缓存（防止缓存穿透）
-            mediaRedisCacheService.putMyUploadList(uploaderUserId, category, safePage, safeSize, 0L, Collections.emptyList());
+            redisCacheMediaListService.putMyUploadList(uploaderUserId, category, safePage, safeSize, 0L, Collections.emptyList());
         }
     }
 
@@ -471,11 +475,11 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         Media media = mediaService.getById(mediaId);
         if (media == null || media.getState() == null) {
             // 防止缓存穿透：写入空值缓存
-            mediaRedisCacheService.putNullValue(mediaId);
+            redisCacheMediaCoreService.putNullValue(mediaId);
         } else if (media.getState() != null && media.getState() == 0) {
             // 仅 state=0 的媒体写入缓存
             cachedMediaMap.put(mediaId, media);
-            mediaRedisCacheService.putMediaCore(mediaId, media);
+            redisCacheMediaCoreService.putMediaCore(mediaId, media);
         }
     }
 
@@ -499,7 +503,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             try {
                 // 1. 尝试获取分布式锁（最多重试3次）
                 for (int retryCount = 0; retryCount < 3; retryCount++) {
-                    lockAcquired = mediaRedisCacheService.tryLockMediaCore(mediaId, requestId);
+                    lockAcquired = redisCacheMediaCoreService.tryLockMediaCore(mediaId, requestId);
                     if (lockAcquired) {
                         // 获取锁成功，启动后台线程自动续期（WatchDog机制）
                         // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
@@ -511,7 +515,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                         final Long finalMediaId = mediaId;
                         final String finalRequestId = requestId;
                         lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                            boolean renewed = mediaRedisCacheService.renewLockMediaCore(finalMediaId, finalRequestId);
+                            boolean renewed = redisCacheMediaCoreService.renewLockMediaCore(finalMediaId, finalRequestId);
                             if (!renewed) {
                                 log.warn("lock renewal failed for media core, lock may have been released mediaId={} requestId={}", finalMediaId, finalRequestId);
                             }
@@ -527,7 +531,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                         break;
                     }
                     // 重试查询缓存，可能其他线程已经写入
-                    Media cachedMedia = mediaRedisCacheService.getMediaCore(mediaId);
+                    Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
                     if (cachedMedia != null) {
                         // 缓存已命中，加入结果
                         cachedMediaMap.put(mediaId, cachedMedia);
@@ -537,7 +541,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 
                 if (lockAcquired) {
                     // 2. 获取到分布式锁后，再次查询缓存（双重检测）
-                    Media cachedMedia = mediaRedisCacheService.getMediaCore(mediaId);
+                    Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
                     if (cachedMedia != null) {
                         // 其他线程已经写入缓存，使用缓存数据
                         cachedMediaMap.put(mediaId, cachedMedia);
@@ -569,7 +573,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 }
                 // 释放分布式锁
                 if (lockAcquired) {
-                    mediaRedisCacheService.unlockMediaCore(mediaId, requestId);
+                    redisCacheMediaCoreService.unlockMediaCore(mediaId, requestId);
                 }
             }
         }
@@ -620,7 +624,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
 
         // 先查缓存：获取媒体列表（包含total和mediaIds）
-        MediaListCacheValue cachedList = mediaRedisCacheService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
+        MediaListCacheValue cachedList = redisCacheMediaListService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
         
         List<Media> records;
         long total;
@@ -631,7 +635,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             log.info("listMyUpload cache hit uploaderUserId={} category={} page={} size={} total={} cachedIds={}", 
                     uploaderUserId, category, safePage, safeSize, cachedList.getTotal(), cachedMediaIds.size());
             
-            Map<Long, Media> cachedMediaMap = mediaRedisCacheService.batchGetMediaCore(cachedMediaIds);
+            Map<Long, Media> cachedMediaMap = redisCacheMediaCoreService.batchGetMediaCore(cachedMediaIds);
             
             // 找出media:core缓存中不存在的 media id，从DB加载（需要加分布式锁保护）
             // 注意：listMyUpload 允许显示 state=6/7，但 media:core 只缓存 state=0
@@ -667,7 +671,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             try {
                 // 1. 尝试获取分布式锁（最多重试3次）
                 for (int retryCount = 0; retryCount < 3; retryCount++) {
-                    lockAcquired = mediaRedisCacheService.tryLockMyUploadList(uploaderUserId, category, safePage, safeSize, requestId);
+                    lockAcquired = redisCacheMediaListService.tryLockMyUploadList(uploaderUserId, category, safePage, safeSize, requestId);
                     if (lockAcquired) {
                         // 获取锁成功，启动后台线程自动续期（WatchDog机制）
                         // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
@@ -682,7 +686,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                             return t;
                         });
                         lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                            boolean renewed = mediaRedisCacheService.renewLockMyUploadList(finalUploaderUserId, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
+                            boolean renewed = redisCacheMediaListService.renewLockMyUploadList(finalUploaderUserId, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
                             if (!renewed) {
                                 log.warn("lock renewal failed for my upload list, lock may have been released uploaderUserId={} category={} page={} size={} requestId={}", 
                                         finalUploaderUserId, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
@@ -700,7 +704,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                         break;
                     }
                     // 重试查询缓存，可能其他线程已经写入
-                    MediaListCacheValue retryCachedList = mediaRedisCacheService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
+                    MediaListCacheValue retryCachedList = redisCacheMediaListService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
                     MyUploadPageResult retryResult = buildMyUploadResultFromCache(retryCachedList, uploaderUserId, safePage, safeSize, category);
                     if (retryResult != null) {
                         // 缓存已命中，直接返回（不需要释放锁，因为没获取到）
@@ -710,7 +714,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 
                 if (lockAcquired) {
                     // 2. 获取到分布式锁后，再次查询缓存（双重检测）
-                    MediaListCacheValue doubleCheckCachedList = mediaRedisCacheService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
+                    MediaListCacheValue doubleCheckCachedList = redisCacheMediaListService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
                     MyUploadPageResult doubleCheckResult = buildMyUploadResultFromCache(doubleCheckCachedList, uploaderUserId, safePage, safeSize, category);
                     if (doubleCheckResult != null) {
                         // 其他线程已经写入缓存，直接返回（需要释放锁）
@@ -749,7 +753,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 }
                 // 释放分布式锁
                 if (lockAcquired) {
-                    mediaRedisCacheService.unlockMyUploadList(uploaderUserId, category, safePage, safeSize, requestId);
+                    redisCacheMediaListService.unlockMyUploadList(uploaderUserId, category, safePage, safeSize, requestId);
                 }
             }
         }
