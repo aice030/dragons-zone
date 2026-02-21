@@ -207,15 +207,28 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 12) 上传封面文件到对象存储（如果用户提供了封面）
         uploadCoverToStorageIfPresent(cover, coverPath);
 
-        // 13) 删除"我的上传"列表缓存（新上传的媒体会出现在"我的上传"列表中）
-        // 注意：新上传的媒体为 state=6（待审核），不会出现在公共区/专区列表中，所以不需要删除公共区/专区列表缓存
-        if (category != null && uploaderUserId != null) {
+        // 13) 写时删除：仅删 media:my（上传前不存在 media:core，上传后 state=6 不影响 media:list）
+        if (uploaderUserId != null) {
             try {
-                redisCacheMediaListService.evictMyUploadList(uploaderUserId, category);
+                evictMyUploadListForDelete(media.getId(), uploaderUserId, null, true);
+                if (category != null) {
+                    evictMyUploadListForDelete(media.getId(), uploaderUserId, category, true);
+                }
             } catch (Exception e) {
-                log.warn("evict my upload list cache failed uploaderId={} category={} error={}", 
-                        uploaderUserId, category, e.getMessage());
+                log.warn("upload evict media:my cache failed uploaderId={} category={} error={}", uploaderUserId, category, e.getMessage());
             }
+            // 延迟双删：500ms 后再删一次缓存
+            delayDeleteExecutor.schedule(() -> {
+                try {
+                    evictMyUploadListForDelete(media.getId(), uploaderUserId, null, false);
+                    if (category != null) {
+                        evictMyUploadListForDelete(media.getId(), uploaderUserId, category, false);
+                    }
+                    log.info("upload delay double delete media:my cache success mediaId={}", media.getId());
+                } catch (Exception e) {
+                    log.warn("upload delay double delete media:my cache failed mediaId={}", media.getId(), e);
+                }
+            }, 500, TimeUnit.MILLISECONDS);
         }
 
         log.info("upload success mediaId={} category={} uploaderId={}", media.getId(), category, uploaderUserId);
@@ -388,16 +401,12 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         log.info("delete success mediaId={} userId={}", mediaId, currentUserId);
 
         // 延迟 500ms 后再删一次缓存（延迟双删）
-        final Long idToEvict = mediaId;
-        final Byte finalCategory = category;
-        final Long finalUploaderId = uploaderId;
-        final List<Long> finalZoneUserIds = zoneUserIds;
         delayDeleteExecutor.schedule(() -> {
             try {
-                evictMediaCacheForDelete(idToEvict, finalCategory, finalUploaderId, finalZoneUserIds, false);
-                log.info("delay double delete cache success mediaId={}", idToEvict);
+                evictMediaCacheForDelete(mediaId, category, uploaderId, zoneUserIds, false);
+                log.info("delay double delete cache success mediaId={}", mediaId);
             } catch (Exception e) {
-                log.warn("delay double delete cache failed mediaId={}", idToEvict, e);
+                log.warn("delay double delete cache failed mediaId={}", mediaId, e);
             }
         }, 500, TimeUnit.MILLISECONDS);
     }
@@ -619,15 +628,31 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
         // 写时删除：媒体信息变更，删除缓存
-        try {
-            redisCacheMediaCoreService.evictMediaCore(mediaId);
-            // 如果原 state=0，删除列表缓存与点赞相关缓存（媒体会从列表中消失且不再对外可赞）
-            if (currentState != null && currentState == 0) {
-                evictMediaListCache(mediaId, media.getCategory());
+        if (currentState != null && currentState == 0) {
+            try {
+                redisCacheMediaCoreService.evictMediaCore(mediaId);
+                evictMediaListCacheAllCategories(mediaId, true);
                 redisCacheMediaLikeService.evictMediaLikeData(mediaId);
+            } catch (Exception e) {
+                log.error("update media cache failed mediaId={} reason={}", mediaId, e.getMessage());
             }
-        } catch (Exception e) {
-            log.error("update media cache failed mediaId={} reason={}", mediaId, e.getMessage());
+            // 延迟双删：500ms 后再删一次缓存
+            delayDeleteExecutor.schedule(() -> {
+                try {
+                    redisCacheMediaCoreService.evictMediaCore(mediaId);
+                    evictMediaListCacheAllCategories(mediaId, false);
+                    redisCacheMediaLikeService.evictMediaLikeData(mediaId);
+                    log.info("update delay double delete cache success mediaId={}", mediaId);
+                } catch (Exception e) {
+                    log.warn("update delay double delete cache failed mediaId={}", mediaId, e);
+                }
+            }, 500, TimeUnit.MILLISECONDS);
+        } else {
+            try {
+                redisCacheMediaCoreService.evictMediaCore(mediaId);
+            } catch (Exception e) {
+                log.error("update media cache failed mediaId={} reason={}", mediaId, e.getMessage());
+            }
         }
         log.info("media update success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), null);
@@ -704,11 +729,22 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // updateCover 只允许 state=0 的媒体，更新后会变为 state=6，需要删除列表缓存与点赞相关缓存
         try {
             redisCacheMediaCoreService.evictMediaCore(mediaId);
-            evictMediaListCache(mediaId, media.getCategory());
+            evictMediaListCacheAllCategories(mediaId, true);
             redisCacheMediaLikeService.evictMediaLikeData(mediaId);
         } catch (Exception e) {
             log.error("media cache update failed mediaId={}", mediaId);
         }
+        // 延迟双删：500ms 后再删一次缓存
+        delayDeleteExecutor.schedule(() -> {
+            try {
+                redisCacheMediaCoreService.evictMediaCore(mediaId);
+                evictMediaListCacheAllCategories(mediaId, false);
+                redisCacheMediaLikeService.evictMediaLikeData(mediaId);
+                log.info("updateCover delay double delete cache success mediaId={}", mediaId);
+            } catch (Exception e) {
+                log.warn("updateCover delay double delete cache failed mediaId={}", mediaId, e);
+            }
+        }, 500, TimeUnit.MILLISECONDS);
         log.info("media cover update success mediaId={}", mediaId);
         return new CoverUpdateResult(mediaId, coverPath, coverUrl);
     }
@@ -751,6 +787,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         toAdd.removeAll(oldSet);
         Set<Long> toRemove = new HashSet<>(oldSet);
         toRemove.removeAll(newSet);
+        // 受影响的成员专区：新增的与移除的（公共区 zoneUserId=0 不依赖 media_visible，无需删除）
+        Set<Long> affectedZones = new HashSet<>(toAdd);
+        affectedZones.addAll(toRemove);
 
         try {
             if (!toRemove.isEmpty()) {
@@ -785,6 +824,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         // 若此前为 state=2（上传成功但不可见，通常是 upload 阶段写入 media_visible 失败导致），
         // 调用本接口修复可见范围成功后，将状态修正为 state=0（正常可查看）。
         // 其余状态下，本接口仅维护 media_visible，不影响媒体审核状态（state）。
+        boolean stateCorrectedTo0 = false;
         if (media.getState() != null && media.getState() == 2) {
             log.info("rebuildVisible: correcting media state from 2 to 0 mediaId={}", mediaId);
             media.setState((byte) 0);
@@ -793,7 +833,31 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 log.error("rebuildVisible failed mediaId={} reason=state_correct_2_to_0_failed", mediaId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
+            stateCorrectedTo0 = true;
         }
+
+        // 写时删除：可见范围变更，删除受影响专区的 media:list 缓存（三种 category 全删）
+        // 成员专区：toAdd ∪ toRemove；state 2→0 时公共区也需删除（媒体新出现在公共区）
+        if (!affectedZones.isEmpty() || stateCorrectedTo0) {
+            if (stateCorrectedTo0) {
+                affectedZones.add(0L);
+            }
+            try {
+                evictMediaListCacheForZones(mediaId, affectedZones, true);
+            } catch (Exception e) {
+                log.warn("rebuildVisible evict media list cache failed mediaId={} error={}", mediaId, e.getMessage());
+            }
+            // 延迟双删：500ms 后再删一次缓存
+            delayDeleteExecutor.schedule(() -> {
+                try {
+                    evictMediaListCacheForZones(mediaId, affectedZones, false);
+                    log.info("rebuildVisible delay double delete cache success mediaId={}", mediaId);
+                } catch (Exception e) {
+                    log.warn("rebuildVisible delay double delete cache failed mediaId={}", mediaId, e);
+                }
+            }, 500, TimeUnit.MILLISECONDS);
+        }
+
         log.info("media visible rebuild success mediaId={}", mediaId);
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);
     }
@@ -1167,16 +1231,16 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             evictCore.run();
         }
         // 列表：先 all，再具体 category
-        evictMediaListForDelete(mediaId, 0L, null, perCallTryCatch);
+        evictMediaListOnce(mediaId, 0L, null, perCallTryCatch);
         if (category != null) {
-            evictMediaListForDelete(mediaId, 0L, category, perCallTryCatch);
+            evictMediaListOnce(mediaId, 0L, category, perCallTryCatch);
         }
         if (zoneUserIds != null && !zoneUserIds.isEmpty()) {
             for (Long zoneUserId : zoneUserIds) {
                 if (zoneUserId != null) {
-                    evictMediaListForDelete(mediaId, zoneUserId, null, perCallTryCatch);
+                    evictMediaListOnce(mediaId, zoneUserId, null, perCallTryCatch);
                     if (category != null) {
-                        evictMediaListForDelete(mediaId, zoneUserId, category, perCallTryCatch);
+                        evictMediaListOnce(mediaId, zoneUserId, category, perCallTryCatch);
                     }
                 }
             }
@@ -1194,17 +1258,16 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
     }
 
-    private void evictMediaListForDelete(Long mediaId, Long zoneUserId, Byte category, boolean perCallTryCatch) {
+    /**
+     * 删除单个 (zoneUserId, category) 的 media:list 缓存。供 evictMediaCacheForDelete 与 evictMediaListCacheAllCategories 共用。
+     */
+    private void evictMediaListOnce(Long mediaId, Long zoneUserId, Byte category, boolean perCallTryCatch) {
         Runnable r = () -> redisCacheMediaListService.evictMediaList(zoneUserId, category);
         if (perCallTryCatch) {
             try {
                 r.run();
             } catch (Exception e) {
-                if (zoneUserId == 0L) {
-                    log.warn("delete: evictMediaList(0) failed mediaId={} category={} error={}", mediaId, category, e.getMessage());
-                } else {
-                    log.warn("delete: evictMediaList(zone) failed mediaId={} zoneUserId={} category={} error={}", mediaId, zoneUserId, category, e.getMessage());
-                }
+                log.warn("evictMediaList failed mediaId={} zoneUserId={} category={} error={}", mediaId, zoneUserId, category, e.getMessage());
             }
         } else {
             r.run();
@@ -1225,33 +1288,77 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
-     * 删除媒体相关的列表缓存（公共区/专区）
-     * 用于 update、updateCover、approve、reject 等操作后删除列表缓存
-     *
-     * @param mediaId 媒体ID
-     * @param category 媒体分类（0=图片，1=视频）
+     * 驳回时使用的缓存清理：media:core + media:my。
+     * 不删 media:list（被驳回媒体从未出现在公共区/专区列表）。
+     * 供 rejectMedia 第一次删除与延迟双删共用。
      */
-    private void evictMediaListCache(Long mediaId, Byte category) {
-        if (mediaId == null || category == null) {
+    private void evictMediaCacheForReject(Long mediaId, Long uploaderId, Byte category, boolean perCallTryCatch) {
+        Runnable evictCore = () -> redisCacheMediaCoreService.evictMediaCore(mediaId);
+        if (perCallTryCatch) {
+            try { evictCore.run(); } catch (Exception e) { log.warn("reject: evictMediaCore failed mediaId={} error={}", mediaId, e.getMessage()); }
+        } else {
+            evictCore.run();
+        }
+        if (uploaderId != null) {
+            evictMyUploadListForDelete(mediaId, uploaderId, null, perCallTryCatch);
+            if (category != null) {
+                evictMyUploadListForDelete(mediaId, uploaderId, category, perCallTryCatch);
+            }
+        }
+    }
+
+    /**
+     * 删除指定专区的 media:list 缓存，三种 category（all/0/1）全部删除。
+     * 用于 rebuildVisible：可见范围变更时，删除受影响的专区（含成员专区和/或公共区 zoneUserId=0）。
+     *
+     * @param mediaId        媒体ID（用于日志）
+     * @param zoneUserIds    要删除的专区ID集合（可含 0=公共区）
+     * @param perCallTryCatch true=每项 evict 单独 try-catch
+     */
+    private void evictMediaListCacheForZones(Long mediaId, Set<Long> zoneUserIds, boolean perCallTryCatch) {
+        if (mediaId == null || zoneUserIds == null || zoneUserIds.isEmpty()) {
+            return;
+        }
+        for (Long zoneUserId : zoneUserIds) {
+            if (zoneUserId == null) {
+                continue;
+            }
+            evictMediaListOnce(mediaId, zoneUserId, null, perCallTryCatch);
+            evictMediaListOnce(mediaId, zoneUserId, (byte) 0, perCallTryCatch);
+            evictMediaListOnce(mediaId, zoneUserId, (byte) 1, perCallTryCatch);
+        }
+    }
+
+    /**
+     * 删除媒体展示列表缓存（公共区+专区），三种 category（all/0/1）全部删除。
+     * 用于 update、rebuildVisible、updateCover、approveMedia 等操作后的缓存失效及延迟双删。
+     *
+     * @param mediaId        媒体ID
+     * @param perCallTryCatch true=每项 evict 单独 try-catch（第一次删除）；false=不包 try-catch（延迟双删）
+     */
+    private void evictMediaListCacheAllCategories(Long mediaId, boolean perCallTryCatch) {
+        if (mediaId == null) {
             return;
         }
         try {
-            // 查询媒体所属的专区列表
             List<Long> zoneUserIds = mediaVisibleService.getVisibleUserIdsByMediaId(mediaId);
-            
-            // 删除公共区列表缓存（zoneUserId=0）
-            redisCacheMediaListService.evictMediaList(0L, category);
-            
-            // 删除所有成员专区的列表缓存
+            // 公共区 + 成员专区
+            List<Long> zones = new ArrayList<>();
+            zones.add(0L);
             if (zoneUserIds != null && !zoneUserIds.isEmpty()) {
-                for (Long zoneUserId : zoneUserIds) {
-                    if (zoneUserId != null) {
-                        redisCacheMediaListService.evictMediaList(zoneUserId, category);
+                for (Long z : zoneUserIds) {
+                    if (z != null && !z.equals(0L)) {
+                        zones.add(z);
                     }
                 }
             }
+            for (Long zoneUserId : zones) {
+                evictMediaListOnce(mediaId, zoneUserId, null, perCallTryCatch);
+                evictMediaListOnce(mediaId, zoneUserId, (byte) 0, perCallTryCatch);
+                evictMediaListOnce(mediaId, zoneUserId, (byte) 1, perCallTryCatch);
+            }
         } catch (Exception e) {
-            log.warn("evict media list cache failed mediaId={} category={} error={}", mediaId, category, e.getMessage());
+            log.warn("evict media list cache all categories failed mediaId={} error={}", mediaId, e.getMessage());
         }
     }
 
@@ -1319,10 +1426,22 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // state 变为 0 后，会出现在公共区/专区列表中，需要删除列表缓存以刷新
                 try {
                     redisCacheMediaCoreService.evictMediaCore(media.getId());
-                    evictMediaListCache(media.getId(), media.getCategory());
+                    evictMediaListCacheAllCategories(media.getId(), true);
                 } catch (Exception e) {
                     log.warn("after approve media cache delete failed error={}", e.getMessage());
                 }
+                // 延迟双删：500ms 后再删一次缓存
+                // 必须用 final 变量捕获当次循环的 mediaId：media 在循环中会变，若直接捕获 media 则 500ms 后执行时会是最后一次循环的值
+                final Long idToEvict = media.getId();
+                delayDeleteExecutor.schedule(() -> {
+                    try {
+                        redisCacheMediaCoreService.evictMediaCore(idToEvict);
+                        evictMediaListCacheAllCategories(idToEvict, false);
+                        log.info("approveMedia delay double delete cache success mediaId={}", idToEvict);
+                    } catch (Exception e) {
+                        log.warn("approveMedia delay double delete cache failed mediaId={}", idToEvict, e);
+                    }
+                }, 500, TimeUnit.MILLISECONDS);
             }
         }
         int successCount = mediaIds.size() - failedItems.size();
@@ -1373,14 +1492,25 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             if (!this.updateById(media)) {
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
             } else {
-                // 审核驳回会改变 state（6→7），删除该媒体缓存和列表缓存
-                // 原 state=6，变为 state=7 后，会从公共区/专区列表中消失，需要删除列表缓存
+                // 审核驳回会改变 state（6→7），删除 media:core 和 media:my（不删 media:list，被驳回媒体从未出现在公共区/专区列表）
                 try {
-                    redisCacheMediaCoreService.evictMediaCore(media.getId());
-                    evictMediaListCache(media.getId(), media.getCategory());
+                    evictMediaCacheForReject(media.getId(), media.getUploaderId(), media.getCategory(), true);
                 } catch (Exception e) {
                     log.warn("after reject media cache delete failed error={}", e.getMessage());
                 }
+                // 延迟双删：500ms 后再删一次缓存
+                // 必须用 final 变量捕获当次循环的值：media 在循环中会变
+                final Long idToEvict = media.getId();
+                final Long finalUploaderId = media.getUploaderId();
+                final Byte finalCategory = media.getCategory();
+                delayDeleteExecutor.schedule(() -> {
+                    try {
+                        evictMediaCacheForReject(idToEvict, finalUploaderId, finalCategory, false);
+                        log.info("rejectMedia delay double delete cache success mediaId={}", idToEvict);
+                    } catch (Exception e) {
+                        log.warn("rejectMedia delay double delete cache failed mediaId={}", idToEvict, e);
+                    }
+                }, 500, TimeUnit.MILLISECONDS);
             }
         }
         int successCount = mediaIds.size() - failedItems.size();
