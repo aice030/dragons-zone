@@ -85,6 +85,27 @@ public class MediaVisibleController {
     }
 
     /**
+     * 热门媒体列表（按点赞数降序 Top N，不做分页、不做专区）
+     * 游客可访问，无需 token。
+     *
+     * GET /api/mediaVisible/rank?category=0&size=20
+     * category 可选：null/不传=全部，0=图片，1=视频
+     * size 可选：默认 20，最大 100
+     */
+    @GetMapping("/rank")
+    public Result<List<IMediaVisibleService.HotListItem>> rank(
+            @RequestParam(value = "category", required = false) String category,
+            @RequestParam(value = "size", required = false, defaultValue = "20") Integer size
+    ) {
+        Byte categoryValue = parseCategory(category);
+        if (categoryValue == null && category != null && !category.trim().isEmpty()) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+        List<IMediaVisibleService.HotListItem> list = mediaVisibleService.listHotMedia(categoryValue, size);
+        return Result.success("查询成功", list);
+    }
+
+    /**
      * 根据媒体ID查询该媒体属于哪些成员专区
      *
      * GET /api/mediaVisible/{mediaId}/zones

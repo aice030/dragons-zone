@@ -2,12 +2,16 @@ package com.dragons.core.cache;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -53,6 +57,14 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
+    /** 根据分类返回排行榜 ZSET key（实现细节，仅本类使用）。 */
+    private static String rankKeyByCategory(Byte category) {
+        if (category == null) {
+            return RANK_KEY_ALL;
+        }
+        return category == 0 ? RANK_KEY_0 : RANK_KEY_1;
+    }
+
     @Override
     public boolean like(Long mediaId, Long userId, Byte category) {
         if (mediaId == null || userId == null || category == null) {
@@ -71,7 +83,7 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
             }
             // 2.位图置 1，并更新排行榜 ZSET（all + category 双 key）
             stringRedisTemplate.opsForValue().setBit(likedKey, offset, true);
-            List<String> keys = List.of(RANK_KEY_ALL, RedisCacheMediaLikeService.rankKeyByCategory(category));
+            List<String> keys = List.of(RANK_KEY_ALL, rankKeyByCategory(category));
             DefaultRedisScript<Long> script = new DefaultRedisScript<>();
             script.setScriptText(LUA_LIKE);
             script.setResultType(Long.class);
@@ -107,7 +119,7 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
             }
             // 2.位图置 0，并对排行榜 ZSET 执行 -1（仅当 score>0，Lua 保证）
             stringRedisTemplate.opsForValue().setBit(likedKey, offset, false);
-            List<String> keys = List.of(RANK_KEY_ALL, RedisCacheMediaLikeService.rankKeyByCategory(category));
+            List<String> keys = List.of(RANK_KEY_ALL, rankKeyByCategory(category));
             DefaultRedisScript<Long> script = new DefaultRedisScript<>();
             script.setScriptText(LUA_UNLIKE);
             script.setResultType(Long.class);
@@ -172,6 +184,45 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
             log.info("setLiked success mediaId={} userId={} liked={}", mediaId, userId, liked);
         } catch (Exception e) {
             log.error("setLiked failed mediaId={} userId={} liked={} error={}", mediaId, userId, liked, e.getMessage());
+        }
+    }
+
+    @Override
+    public List<RedisCacheMediaLikeService.RankEntry> getRankMediaIdsWithScores(Byte category, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        // 根据 category 确认要获取的排行榜类别
+        String rankKey = rankKeyByCategory(category);
+        try {
+            // 从 ZSET 获取指定数量的成员，members 和对应的 score
+            Set<ZSetOperations.TypedTuple<String>> tuples = stringRedisTemplate.opsForZSet()
+                    .reverseRangeWithScores(rankKey, 0, limit - 1);
+            if (tuples == null || tuples.isEmpty()) {
+                log.warn("getRankMediaIdsWithScores no data category={} limit={}", category, limit);
+                return List.of();
+            }
+            // 将 ZSET 返回的集合，规范为每个元素为 Long 类型的 mediaId 和 Long 类型的 likeCount 的列表（原 score 可能为 null），并排序
+            List<RedisCacheMediaLikeService.RankEntry> result = new ArrayList<>(tuples.size());
+            for (ZSetOperations.TypedTuple<String> t : tuples) {
+                if (t == null || t.getValue() == null) {
+                    continue;
+                }
+                long mediaId = Long.parseLong(t.getValue(), 10);
+                long likeCount = t.getScore() != null ? t.getScore().longValue() : 0L;
+                result.add(new RedisCacheMediaLikeService.RankEntry(mediaId, likeCount));
+            }
+            // 按 likeCount 降序排序，likeCount 相同则按 mediaId 升序排序
+            result.sort(Comparator.comparingLong(RedisCacheMediaLikeService.RankEntry::likeCount).reversed()
+                    .thenComparingLong(RedisCacheMediaLikeService.RankEntry::mediaId));
+            log.info("getRankMediaIdsWithScores success category={} limit={} result={}", category, limit, result);
+            return result;
+        } catch (NumberFormatException e) {
+            log.warn("getRankMediaIdsWithScores parse mediaId failed category={} limit={} error={}", category, limit, e.getMessage());
+            return List.of();
+        } catch (Exception e) {
+            log.error("getRankMediaIdsWithScores failed category={} limit={} error={}", category, limit, e.getMessage());
+            return List.of();
         }
     }
 

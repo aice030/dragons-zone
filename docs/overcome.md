@@ -403,6 +403,12 @@
 - **ZSET**：对上述两 key 执行 ZINCRBY -1（仅当 score>0，Lua 保证），对应 mediaId 的 score -1；以缓存为主，定期落库。
 - **用户点赞关系**：**先删除数据库中该条记录**（user_like_record），**再更新缓存**（SETBIT 0）。
 
+### 排行榜查询实现
+
+- **一次 Redis 取数**：使用 ZREVRANGE WITHSCORES 一次取 Top N 的 member 与 score；Spring 返回 `Set<TypedTuple<String>>`，转成 `List<RankEntry>` 后按 score 降序、mediaId 升序排序，保证顺序与 Redis 一致。
+- **ZSET 不存在**：不主动创建；直接返回空列表。ZSET 由点赞时的 ZINCRBY 在 key 不存在时自动创建，无需读时回源。
+- **媒体信息补全**：按 mediaId 列表先批量查 media:core；未命中的 id 再按 id 加分布式锁、双重检测后查 DB 并写回 media:core，最后按顺序组装 HotListItem（likeCount 取自 ZSET score）。
+
 ### 缓存恢复策略（Redis 宕机后）
 - Redis 宕机导致 ZSET 与 bitmap 丢失时，以 **user_like_record** 为数据源恢复缓存。
 - **ZSET 恢复**：按 media_id 聚合统计每条 media 的点赞数，对 `media:rank:all` 与 `media:rank:{category}` 执行 ZADD（mediaId, count）。

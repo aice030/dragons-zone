@@ -1,5 +1,6 @@
 package com.dragons.core.cache;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -78,14 +79,18 @@ public interface RedisCacheMediaLikeService {
     void evictMediaLikeData(Long mediaId);
 
     /**
-     * 根据分类返回排行榜 ZSET key。
+     * 排行榜单项：媒体ID与点赞数（来自 ZSET score）。
      */
-    static String rankKeyByCategory(Byte category) {
-        if (category == null) {
-            return RANK_KEY_ALL;
-        }
-        return category == 0 ? RANK_KEY_0 : RANK_KEY_1;
-    }
+    record RankEntry(long mediaId, long likeCount) {}
+
+    /**
+     * 从排行榜 ZSET 取 Top N（按点赞数降序），带 score（likeCount）。
+     *
+     * @param category 分类：null=全部，0=图片，1=视频（对应 media:rank:all / 0 / 1）
+     * @param limit    取前几条（建议 size+10 以便过滤 state!=0 后仍能凑满 size）
+     * @return 按点赞数降序的 (mediaId, likeCount) 列表，可能不足 limit 条
+     */
+    List<RankEntry> getRankMediaIdsWithScores(Byte category, int limit);
 
     // ---------- 分布式锁（SET NX，防击穿：查询已赞状态缓存未命中时同一 media 仅一人查 DB 并写回） ----------
 

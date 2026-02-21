@@ -166,6 +166,7 @@ dragons-zone/
 - [x] 点赞接口（POST /api/media/{id}/like）- 需登录；仅 state=0 可点赞；Redis bitmap 保证一人一次，ZSET 更新排行，同步落库 user_like_record
 - [x] 取消点赞接口（POST /api/media/{id}/unlike）- 需登录；从 Redis bitmap 置 0 并 ZSET -1，同步删除 user_like_record
 - [x] 查询是否已赞接口（GET /api/userLikeRecord/media/{mediaId}/status）- 需登录；先查 Redis bitmap，未命中查 DB 并写回，返回 true/false；当前无锁
+- [x] 热门排行榜接口（GET /api/mediaVisible/rank）- 游客可访问；按点赞数 Top N，返回 HotListItem 列表（id、category、title、description、coverUrl、likeCount）；category 筛选，size 默认 20 最大 100；不做分页、不做专区
 
 #### 步骤4：树洞功能接口 ✅
 - [x] 投递留言接口（/api/treehole/{ownerId}/sent/messages）- 带防刷：上一条未读前禁止重复投递；同一接口支持可选 rootMessageId 做主人回复，回复时根消息自动标已读
@@ -179,7 +180,7 @@ dragons-zone/
 
 ### 后端闭环检查确认（可进入前端开发）
 
-- **接口覆盖**：用户（登录/注册/注销/重置密码/找回密码）、媒体（上传/更新/封面/可见范围/列表/详情/下载/删除、我的上传、审核通过/驳回/待审核列表、查询所属成员专区、点赞/取消点赞/查询是否已赞）、树洞（投递与回复/留言列表/已读/主人删除/发送者删除/开关/分享/分享收件箱）、树洞黑名单（拉黑）均已实现，与 API_DESIGN.md、development 清单一致。
+- **接口覆盖**：用户（登录/注册/注销/重置密码/找回密码）、媒体（上传/更新/封面/可见范围/列表/详情/下载/删除、我的上传、审核通过/驳回/待审核列表、查询所属成员专区、点赞/取消点赞/查询是否已赞、热门排行榜）、树洞（投递与回复/留言列表/已读/主人删除/发送者删除/开关/分享/分享收件箱）、树洞黑名单（拉黑）均已实现，与 API_DESIGN.md、development 清单一致。
 - **鉴权**：permitAll 仅开放登录/注册/找回密码及游客模式（GET 媒体列表、媒体详情、下载链接）；其余接口需 JWT，Controller 层对 principal 做 null 校验并返回 401。
 - **异常与响应**：BusinessException 由 GlobalExceptionHandler 统一转为 Result.error；Result 统一带 code/message/data/timestamp。
 - **业务逻辑**：媒体软删除与 MinIO 顺序、上传 state=2 写库失败回滚 MinIO、封面更新补偿、可见范围差量同步与事务、树洞防刷与回复原子性、分享部分失败动态文案等已按文档实现，未发现逻辑错误。
@@ -208,7 +209,6 @@ dragons-zone/
 
 ### 待实现（点赞与排行榜）
 - [ ] 点赞数定期落库（ZSET 定时回写 media.like_count）
-- [ ] 热门 media 排行榜接口（GET /api/media/rank）
 - [ ] 点赞相关前后端联调（点赞/取消点赞/是否已赞）
 - [ ] 前端热门排行榜界面
 
@@ -484,6 +484,13 @@ dragons-zone/
   }
 }
 ```
+
+#### GET /api/mediaVisible/rank
+热门排行榜（按点赞数 Top N，**游客模式**：无需登录）✅
+
+**查询参数**：category（可选，0=图片/1=视频/不传=全部）、size（可选，默认 20，最大 100）
+
+**响应示例**：`data` 为 HotListItem 数组（id、category、title、description、coverUrl、likeCount），按点赞数降序。
 
 #### GET /api/media/{id}
 获取媒体文件详情（**游客模式**：无需登录，无需请求头）

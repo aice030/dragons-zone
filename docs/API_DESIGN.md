@@ -1508,42 +1508,46 @@ Authorization: Bearer <JWT_TOKEN>
 
 ---
 
-### 12.4 点赞数排行榜接口
+### 12.4 热门排行榜接口
 
-### GET /api/media/rank
+### GET /api/mediaVisible/rank
 
-**功能说明**：按点赞数从高到低返回媒体 ID 列表（Top N），用于热度榜。支持游客模式，无需请求头。
+**功能说明**：按点赞数从高到低返回热门媒体列表（Top N），不做分页、不做专区。游客可访问，无需请求头。
 
 **请求头**：无需（游客可访问）；若已登录也可携带 JWT。
 
 **查询参数**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| category | Byte | 否 | 类型筛选：不传或 all=全部，0=图片，1=视频 |
-| size | Integer | 否 | 返回条数，默认 20，最大建议 100 |
+| category | String | 否 | 类型筛选：不传=全部，0=图片，1=视频 |
+| size | Integer | 否 | 返回条数，默认 20，最大 100 |
 
 **成功响应**（200）：
 ```json
 {
   "code": 200,
   "message": "查询成功",
-  "data": {
-    "mediaIds": [3, 1, 5, 2, 4]
-  },
+  "data": [
+    {
+      "id": 1,
+      "category": 0,
+      "title": "标题",
+      "description": "描述",
+      "coverUrl": "https://...",
+      "likeCount": 10
+    }
+  ],
   "timestamp": 1705564800000
 }
 ```
 
-**说明**：
-- `mediaIds` 按点赞数从高到低排序；不足 N 条时返回实际条数
-- 仅包含 state=0 的媒体（实现时从 Redis ZSET 取 id 后需过滤已删除/未审核，或在回写/生命周期时已从 ZSET 移除不可见媒体）
-- 前端可根据 mediaIds 再调媒体详情或列表接口拉取封面、标题等；或本接口扩展为直接返回列表项（含 id、coverUrl、likeCount 等），见实现约定
+**字段说明**：`data` 为 HotListItem 数组，按点赞数降序；仅包含 state=0 的媒体；`coverUrl` 为封面预签名 URL。
 
 **业务逻辑**：
 1. 根据 category 确定 Redis key：`media:rank:all` 或 `media:rank:0` / `media:rank:1`
-2. 执行 ZREVRANGE key 0 (size-1) 得到 mediaId 列表
-3. 可选：过滤 state!=0 或已删除的媒体（若 Redis 与 DB 已通过删除/下架 ZREM 保持一致可省略）
-4. 返回 mediaIds；若需带点赞数，可再 ZREVRANGE WITHSCORES 返回 (id, likeCount) 列表
+2. ZREVRANGE WITHSCORES 取前 (size+10) 条，过滤 state!=0 后取前 size 条，保证返回满 size 条（若 ZSET 不足则返回实际条数）
+3. 按 mediaIds 顺序批量查 media:core（缺则加锁查 DB 并回写），组装 HotListItem（likeCount 取自 ZSET score）
+4. ZSET 不存在时返回空数组
 
 ---
 
@@ -1782,7 +1786,7 @@ Content-Type: application/json
 
 ---
 
-## 5. 分享收件箱接口（TreeHoleMessageVisible）
+## 5. 分享收件箱接口（TreeHoleMessageVisible，暂未实现）
 
 ### GET /api/treeholeMessageVisible/shared/list
 
@@ -2033,4 +2037,4 @@ Content-Type: application/json
   - 点赞：`POST /api/media/{id}/like`（需登录，仅 state=0 可点赞；Redis 双 ZSET ZINCRBY）
   - 取消点赞：`POST /api/media/{id}/unlike`（需登录；Redis 先判 score>0 再 ZINCRBY -1）
   - 查询是否已赞：`GET /api/userLikeRecord/media/{mediaId}/status`（归属用户点赞记录，需登录，先查 Redis 再查 DB 并写回缓存，返回 true/false）
-  - 排行榜：`GET /api/media/rank`（游客可访问，query：category、size；返回按点赞数降序的 mediaIds）
+  - 热门排行榜：`GET /api/mediaVisible/rank`（游客可访问，query：category、size；返回 HotListItem 列表，按点赞数降序）

@@ -13,6 +13,7 @@ import com.dragons.core.service.IMediaService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dragons.core.storage.StorageService;
 import com.dragons.core.cache.RedisCacheMediaCoreService;
+import com.dragons.core.cache.RedisCacheMediaLikeService;
 import com.dragons.core.cache.RedisCacheMediaListService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,17 +42,20 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
     private final StorageService storageService;
     private final RedisCacheMediaCoreService redisCacheMediaCoreService;
     private final RedisCacheMediaListService redisCacheMediaListService;
+    private final RedisCacheMediaLikeService redisCacheMediaLikeService;
     private final IMediaService mediaService;
 
     @Autowired
     public MediaVisibleServiceImpl(MediaMapper mediaMapper, StorageService storageService,
                                    RedisCacheMediaCoreService redisCacheMediaCoreService,
                                    RedisCacheMediaListService redisCacheMediaListService,
+                                   RedisCacheMediaLikeService redisCacheMediaLikeService,
                                    IMediaService mediaService) {
         this.mediaMapper = mediaMapper;
         this.storageService = storageService;
         this.redisCacheMediaCoreService = redisCacheMediaCoreService;
         this.redisCacheMediaListService = redisCacheMediaListService;
+        this.redisCacheMediaLikeService = redisCacheMediaLikeService;
         this.mediaService = mediaService;
     }
 
@@ -60,7 +64,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         // 若未传入分页信息，采用默认值
         int safePage = (page == null || page < 1) ? 1 : page;
         int tempSafeSize = (size == null || size < 1) ? 10 : size;
-        final int safeSize = tempSafeSize > 100 ? 100 : tempSafeSize;
+        final int safeSize = Math.min(tempSafeSize, 100);
         // 先确认是成员专区展示（zoneUserId不为null），还是在公共区全量展示（zoneUserId为null）
         Long zoneUserIdForCache = zoneUserId == null ? 0L : zoneUserId;
 
@@ -250,15 +254,6 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         return buildMediaPageResult(records, total, zoneUserIdForCache, safePage, safeSize, category);
     }
 
-    /**
-     * 查询媒体列表数据（从数据库）
-     *
-     * @param zoneUserIdForCache 专区ID：0=公共区，其他=成员专区ID
-     * @param category 分类：null=all，0=图片，1=视频
-     * @param safePage 页码（从1开始）
-     * @param safeSize 每页数量
-     * @return 查询结果，包含 total 和 records
-     */
     private static class MediaListQueryResult {
         final long total;
         final List<Media> records;
@@ -269,6 +264,15 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
     }
 
+    /**
+     * 从数据库查询媒体列表数据
+     *
+     * @param zoneUserIdForCache 专区ID：0=公共区，其他=成员专区ID
+     * @param category 分类：null=all，0=图片，1=视频
+     * @param safePage 页码（从1开始）
+     * @param safeSize 每页数量
+     * @return 查询结果，包含 total 和 records
+     */
     private MediaListQueryResult queryMediaListFromDB(Long zoneUserIdForCache, Byte category, int safePage, int safeSize) {
         long total;
         List<Media> records;
@@ -659,7 +663,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             // 使用缓存中的 total（避免再次查询数据库）
             total = cachedList.getTotal() != null ? cachedList.getTotal() : 0L;
         } else {
-            // media:my 缓存未命中：尝试获取分布式锁，防止缓存击穿
+            // media:my 缓存未命中：整个「我的上传列表」不存在，尝试获取分布式锁，防止缓存击穿
             log.info("listMyUpload cache miss uploaderUserId={} category={} page={} size={}", 
                     uploaderUserId, category, safePage, safeSize);
             
@@ -799,6 +803,63 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
     }
 
+    @Override
+    public List<HotListItem> listHotMedia(Byte category, Integer size) {
+        if (category != null && category != 0 && category != 1) {
+            log.warn("listHotMedia invalid category category={}", category);
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        int safeSize = (size == null || size < 1) ? 20 : size;
+        if (safeSize > 100) {
+            safeSize = 100;
+        }
+        int fetchLimit = safeSize + 10;
+        // 获取 Redis ZSET 中的排行榜数据，得到有序 Entry 列表
+        List<RedisCacheMediaLikeService.RankEntry> rankEntries = redisCacheMediaLikeService.getRankMediaIdsWithScores(category, fetchLimit);
+        if (rankEntries == null || rankEntries.isEmpty()) {
+            log.info("listHotMedia empty rank category={} size={}", category, safeSize);
+            return new ArrayList<>();
+        }
+
+        // 将排行榜数据转换为 mediaId 和 likeCount 的映射
+        // 收集 media id 列表，用于后续查询 media:core 缓存或数据库，获取要返回的 HotListItem 的全部字段
+        Map<Long, Long> mediaIdToLikeCount = new HashMap<>(rankEntries.size());
+        List<Long> mediaIds = new ArrayList<>(rankEntries.size());
+        for (RedisCacheMediaLikeService.RankEntry currentEntry : rankEntries) {
+            mediaIdToLikeCount.put(currentEntry.mediaId(), currentEntry.likeCount());
+            mediaIds.add(currentEntry.mediaId());
+        }
+
+        // 先到 media:core 缓存中查询，统计未命中的 media id 列表
+        Map<Long, Media> mediaMap = redisCacheMediaCoreService.batchGetMediaCore(mediaIds);
+        List<Long> missingIds = mediaIds.stream().filter(id -> !mediaMap.containsKey(id)).collect(Collectors.toList());
+        // 加分布式锁保护，从数据库查询并写入缓存
+        loadMissingMediaWithLock(missingIds, mediaMap);
+        // 构建返回结果
+        List<HotListItem> result = new ArrayList<>(safeSize);
+        for (Long mediaId : mediaIds) {
+            if (result.size() >= safeSize) {
+                break;
+            }
+            Media m = mediaMap.get(mediaId);
+            if (m == null || m.getState() == null || m.getState() != 0) {
+                continue;
+            }
+            String coverUrl = (m.getCoverUrl() != null && !m.getCoverUrl().trim().isEmpty())
+                    ? m.getCoverUrl() : buildCoverPresignedUrl(m.getCoverPath());
+            Long likeCount = mediaIdToLikeCount.getOrDefault(mediaId, 0L);
+            result.add(new HotListItem(
+                    m.getId(),
+                    m.getCategory(),
+                    m.getTitle(),
+                    m.getDescription(),
+                    coverUrl,
+                    likeCount
+            ));
+        }
+        log.info("listHotMedia category={} size={} returned={}", category, safeSize, result.size());
+        return result;
+    }
 
     /**
      * 获取当前media的标签（除公共区外，在哪些成员专区可访问到）

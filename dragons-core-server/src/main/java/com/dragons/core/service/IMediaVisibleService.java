@@ -52,6 +52,36 @@ public interface IMediaVisibleService extends IService<MediaVisible> {
     List<Long> getVisibleUserIdsByMediaId(Long mediaId);
 
     /**
+     * 热门媒体列表（按点赞数降序，Top N，不做分页、不做专区）
+     *
+     * @param category 分类：null=全部，0=图片，1=视频（对应三个 ZSET）
+     * @param size     返回条数（默认 20，最大建议 100）；内部会多取 size+10 条再过滤 state!=0，保证返回满 size 条
+     * @return 热门列表项（id、category、title、description、coverUrl、likeCount），仅 state=0
+     */
+    List<HotListItem> listHotMedia(Byte category, Integer size);
+
+    /**
+     * 热门列表单项（点赞榜：id、分类、标题、描述、封面、点赞数）
+     */
+    class HotListItem {
+        public Long id;
+        public Byte category;
+        public String title;
+        public String description;
+        public String coverUrl;
+        public Long likeCount;
+
+        public HotListItem(Long id, Byte category, String title, String description, String coverUrl, Long likeCount) {
+            this.id = id;
+            this.category = category;
+            this.title = title;
+            this.description = description;
+            this.coverUrl = coverUrl;
+            this.likeCount = likeCount;
+        }
+    }
+
+    /**
      * 媒体列表单项（面向前端的最小字段集合）
      */
     class MediaListItem {
