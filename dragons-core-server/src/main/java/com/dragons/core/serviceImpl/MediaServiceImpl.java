@@ -1,20 +1,20 @@
 package com.dragons.core.serviceImpl;
 
 import com.dragons.core.dto.MediaAuditResult;
+import com.dragons.core.dto.MediaLikeEvent;
 import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.entity.Media;
 import com.dragons.core.dao.MediaMapper;
 import com.dragons.core.entity.MediaVisible;
 import com.dragons.core.entity.User;
-import com.dragons.core.entity.UserLikeRecord;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.cache.RedisCacheMediaCoreService;
 import com.dragons.core.cache.RedisCacheMediaListService;
 import com.dragons.core.cache.RedisCacheMediaLikeService;
 import com.dragons.core.service.IMediaService;
 import com.dragons.core.service.IMediaVisibleService;
-import com.dragons.core.service.IUserLikeRecordService;
 import com.dragons.core.service.IUserService;
+import com.dragons.core.mq.MediaLikeMqProducer;
 import com.dragons.core.storage.StorageService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -59,7 +59,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final RedisCacheMediaCoreService redisCacheMediaCoreService;
     private final RedisCacheMediaListService redisCacheMediaListService;
     private final RedisCacheMediaLikeService redisCacheMediaLikeService;
-    private final IUserLikeRecordService userLikeRecordService;
+    private final MediaLikeMqProducer mediaLikeMqProducer;
 
     /**
      * 封面预签名URL有效期（秒）
@@ -82,14 +82,14 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                             RedisCacheMediaCoreService redisCacheMediaCoreService,
                             RedisCacheMediaListService redisCacheMediaListService,
                             RedisCacheMediaLikeService redisCacheMediaLikeService,
-                            IUserLikeRecordService userLikeRecordService) {
+                            MediaLikeMqProducer mediaLikeMqProducer) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
         this.userService = userService;
         this.redisCacheMediaCoreService = redisCacheMediaCoreService;
         this.redisCacheMediaListService = redisCacheMediaListService;
         this.redisCacheMediaLikeService = redisCacheMediaLikeService;
-        this.userLikeRecordService = userLikeRecordService;
+        this.mediaLikeMqProducer = mediaLikeMqProducer;
     }
 
     @Override
@@ -862,6 +862,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);
     }
 
+    /**
+     * 点赞流程：校验 → Redis(位图+ZSET) → 发 MQ → 写入数据库；MQ 落库失败则回滚 Redis，保证与 DB 一致。
+     */
     @Override
     public void like(Long mediaId, Long currentUserId) {
         if (mediaId == null) {
@@ -878,23 +881,24 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (category == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
-        // 先写 DB 再更新缓存，保证点赞关系强一致（overcome.md）
-        if (userLikeRecordService.existsByUserIdAndMediaId(currentUserId, mediaId)) {
-            return;
+        // 1. 先改 Redis（Lua 原子：位图置 1 + 双 ZSET +1）
+        boolean updated = redisCacheMediaLikeService.like(mediaId, currentUserId, category);
+        if (!updated) {
+            return; // 已赞过，幂等
         }
-        UserLikeRecord record = new UserLikeRecord();
-        record.setUserId(currentUserId);
-        record.setMediaId(mediaId);
-        record.setCreateTime(LocalDateTime.now());
+        // 2. 发 MQ，消费者事务落库；发送失败则回滚 Redis
         try {
-            userLikeRecordService.save(record);
+            mediaLikeMqProducer.send(new MediaLikeEvent(MediaLikeEvent.Operation.LIKE, mediaId, currentUserId, category));
         } catch (Exception e) {
-            log.warn("like: save user_like_record failed mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
-            return;
+            log.error("like: MQ send failed, rolling back Redis mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
+            redisCacheMediaLikeService.rollbackLike(mediaId, currentUserId, category);
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
-        redisCacheMediaLikeService.like(mediaId, currentUserId, category);
     }
 
+    /**
+     * 取消点赞流程：校验 → Redis(位图+ZSET) → 发 MQ → 写入数据库；MQ 落库失败则回滚 Redis，保证与 DB 一致。
+     */
     @Override
     public void unlike(Long mediaId, Long currentUserId) {
         if (mediaId == null) {
@@ -911,10 +915,18 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (category == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
-        // 先删 DB 再更新缓存，保证点赞关系强一致（overcome.md）
-        boolean removed = userLikeRecordService.removeByUserIdAndMediaId(currentUserId, mediaId);
-        if (removed) {
-            redisCacheMediaLikeService.unlike(mediaId, currentUserId, category);
+        // 1. 先改 Redis（Lua 原子：位图置 0 + 双 ZSET -1，仅当 score>0）
+        boolean updated = redisCacheMediaLikeService.unlike(mediaId, currentUserId, category);
+        if (!updated) {
+            return; // 未赞过，幂等
+        }
+        // 2. 发 MQ，消费者事务落库；发送失败则回滚 Redis
+        try {
+            mediaLikeMqProducer.send(new MediaLikeEvent(MediaLikeEvent.Operation.UNLIKE, mediaId, currentUserId, category));
+        } catch (Exception e) {
+            log.error("unlike: MQ send failed, rolling back Redis mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
+            redisCacheMediaLikeService.rollbackUnlike(mediaId, currentUserId, category);
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
     }
 

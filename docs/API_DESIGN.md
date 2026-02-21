@@ -1396,7 +1396,7 @@ Authorization: Bearer <JWT_TOKEN>
 
 ## 12. 点赞与排行榜接口
 
-按 Redis_DESIGN.md 排行榜设计：点赞/取消点赞实时更新 Redis ZSET，定时回写 DB；排行榜读 Redis 取 Top N。
+按 Redis_DESIGN.md 排行榜设计：点赞/取消点赞先改 Redis（Lua 更新 ZSET+位图）→ 发 MQ → 消费者事务落库 media.like_count 与 user_like_record，失败则回滚 Redis；排行榜读 Redis 取 Top N。
 
 ### 12.1 点赞接口
 
@@ -1503,8 +1503,7 @@ Authorization: Bearer <JWT_TOKEN>
 **业务逻辑**：
 1. 校验 JWT 并获取当前用户 ID
 2. 校验媒体存在且 state=0（仅已审核通过的媒体可查已赞状态）
-3. **查询流程**：先查 Redis bitmap `media:liked:{mediaId}`（GETBIT userId），位为 1 直接返回已赞；为 0 或 key 不存在则查 DB（user_like_record），写回 SETBIT 后返回
-4. 当前实现无分布式锁；锁能力已预留，可按需启用
+3. **查询流程**：只查 Redis bitmap `media:liked:{mediaId}`（GETBIT userId），位为 1 返回已赞；为 0 或 key 不存在视为未赞返回 false。点赞/取消点赞已先写 Redis 再 MQ 同步 DB，以 Redis 为准，不查 DB、不写回
 
 ---
 
@@ -1553,7 +1552,7 @@ Authorization: Bearer <JWT_TOKEN>
 
 **与 Redis_DESIGN.md 的对应**：
 - 点赞 → Redis ZINCRBY（all + category 双 key，Lua）；取消点赞 → 先判 score>0 再 ZINCRBY -1（Lua）
-- 查询是否已赞 → 先查 Redis（media:liked:{mediaId} bitmap GETBIT），未命中再查 DB 并写回 SETBIT
+- 查询是否已赞 → 只查 Redis（media:liked:{mediaId} bitmap GETBIT），未命中视为未赞
 - 排行榜 → ZREVRANGE 取 Top N；媒体删除/下架 → ZREM 三 key；审核通过 → 若 DB 有 like_count 则 ZADD 初始化
 - 列表/详情展示点赞数：先读 Redis ZSET score，不存在再用 media:core/DB 的 likeCount
 
@@ -2036,5 +2035,5 @@ Content-Type: application/json
 - 新增点赞与排行榜接口（第 12 节，按 Redis_DESIGN.md 排行榜设计）：
   - 点赞：`POST /api/media/{id}/like`（需登录，仅 state=0 可点赞；Redis 双 ZSET ZINCRBY）
   - 取消点赞：`POST /api/media/{id}/unlike`（需登录；Redis 先判 score>0 再 ZINCRBY -1）
-  - 查询是否已赞：`GET /api/userLikeRecord/media/{mediaId}/status`（归属用户点赞记录，需登录，先查 Redis 再查 DB 并写回缓存，返回 true/false）
+  - 查询是否已赞：`GET /api/userLikeRecord/media/{mediaId}/status`（归属用户点赞记录，需登录，只查 Redis 以 Redis 为准，返回 true/false）
   - 热门排行榜：`GET /api/mediaVisible/rank`（游客可访问，query：category、size；返回 HotListItem 列表，按点赞数降序）

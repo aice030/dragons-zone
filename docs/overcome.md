@@ -387,21 +387,23 @@
 
 ## 点赞与查询已赞设计
 
-### 设计概要
-- **排行榜**：Redis ZSET（`media:rank:all` / `media:rank:0` / `media:rank:1`），member=mediaId，score=点赞数；点赞/取消点赞时 ZINCRBY，定时回写 DB。
+### 设计概要（Redis + RocketMQ 方案）
+- **排行榜**：Redis ZSET（`media:rank:all` / `media:rank:0` / `media:rank:1`），member=mediaId，score=点赞数。写路径：**先改 Redis（Lua 位图+ZSET）→ 发 RocketMQ → 同应用内消费者事务落库**；任意环节失败则回滚 Redis，保证与 DB 一致（见 Redis_DESIGN.md）。
 - **是否已赞**：Redis bitmap `media:liked:{mediaId}`，offset=userId，bit=1 表示已赞；每人每媒体一把 bit，每媒体一个 key。
-- **查询流程**：先 GETBIT，为 1 直接返回已赞；为 0（含 key 不存在时 Redis 也返回 0）则查 DB（user_like_record），再 SETBIT 写回后返回。当前实现**无分布式锁**。
+- **查询流程**：只查 Redis GETBIT，为 1 返回已赞；为 0 或 key 不存在视为未赞返回 false。点赞/取消点赞已先写 Redis 再 MQ 同步 DB，以 Redis 为准，不查 DB、不写回。
 - **接口归属**：查询是否已赞归属用户点赞记录，路径 `GET /api/userLikeRecord/media/{mediaId}/status`。
 
-### 点赞/取消点赞实现流程
+### 点赞/取消点赞实现流程（Redis → RocketMQ → 落库，失败回滚 Redis）
+
+**整体顺序**：接口层校验 → Redis（Lua 原子更新位图+双 ZSET）→ 发 RocketMQ（topic：media-like-topic，消息体 MediaLikeEvent）→ 消费者事务落库。两处回滚：① MQ 发送失败时接口层回滚 Redis；② 消费者落库失败时消费者回滚 Redis。
 
 **点赞**
-- **ZSET**：对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY 1，对应 mediaId 的 score +1；以缓存为主，定期落库。
-- **用户与 media 点赞唯一性**：由位图控制一人一赞。**先写数据库**（插入 user_like_record），**再更新缓存**（SETBIT 1），保证点赞关系的强一致性。
+- **接口层（MediaServiceImpl.like）**：校验 media 存在且 state=0、category → 调 `RedisCacheMediaLikeService.like`（位图置 1 + 双 ZSET ZINCRBY 1；已赞过则返回 false 幂等）→ 若 true 则 `MediaLikeMqProducer.send(MediaLikeEvent.LIKE)`；发送失败则 `rollbackLike` 并抛 500。
+- **消费者（MediaLikeMqConsumer）**：收到事件后 `MediaLikePersistService.persist`：事务内插入 user_like_record（已存在则跳过）、`MediaMapper.incrementLikeCount`；失败则 `rollbackLike` 后 rethrow，由 RocketMQ 重试或进死信。
 
 **取消点赞**
-- **ZSET**：对上述两 key 执行 ZINCRBY -1（仅当 score>0，Lua 保证），对应 mediaId 的 score -1；以缓存为主，定期落库。
-- **用户点赞关系**：**先删除数据库中该条记录**（user_like_record），**再更新缓存**（SETBIT 0）。
+- **接口层（MediaServiceImpl.unlike）**：校验 → `RedisCacheMediaLikeService.unlike`（位图置 0 + 双 ZSET 在 score>0 时 ZINCRBY -1；未赞过则返回 false 幂等）→ 若 true 则发 MQ(UNLIKE)；发送失败则 `rollbackUnlike` 并抛 500。
+- **消费者**：事务内删除 user_like_record、`MediaMapper.decrementLikeCount`（SQL 内 GREATEST(0, like_count-1)）；失败则 `rollbackUnlike` 后 rethrow。
 
 ### 排行榜查询实现
 
@@ -415,11 +417,6 @@
 - **Bitmap 恢复**：按 media_id 分组，对每个 mediaId 根据其 user_like_record 中的 user_id 列表，对 `media:liked:{mediaId}` 执行 SETBIT userId 1。
 - 恢复任务可在 Redis 恢复后由定时任务或运维脚本触发执行。
 
-### 为何无法区分「key 不存在」与「该位为 0」
-- Redis 规定：对不存在的 key 执行 GETBIT 任意 offset 均返回 0。故单次 GETBIT 无法区分「key 不存在」与「key 存在但该用户位为 0」，只能统一按缓存未命中处理（查 DB + 写回）。
-
-### 分布式锁方案（未实现）：仅 key 不存在时加锁
-- **思路**：只有「需要创建 bitmap」（key 不存在）时才加锁，避免多用户同时为同一媒体创建 key 造成击穿；若 key 已存在、仅该用户位为 0，则不加锁直接查 DB 写回，减少锁竞争。
-- **实现前提**：在 GETBIT 得 0 后多一次 **EXISTS media:liked:{mediaId}**。EXISTS=0 表示 key 不存在 → 加锁、双重检查、查 DB + SETBIT、解锁；EXISTS=1 表示 key 已存在 → 不加锁，直接查 DB + SETBIT。
-- **代价**：每次 cache miss 多一次 Redis 往返（EXISTS），查询路径略慢。
-- **取舍**：在 QPS/并发不高时，当前采用无锁实现；锁能力（tryLockLiked/unlockLiked/renewLockLiked）已预留，若后续需要可接入「EXISTS + 仅 key 不存在时加锁」方案，保证锁职责清晰。
+### 查询已赞为何只读 Redis
+- 点赞/取消点赞已采用「先写 Redis → MQ 同步 DB」；查询以 Redis 为准，只读 GETBIT，未命中（key 不存在或该位为 0）统一视为未赞，不查 DB、不写回，无需分布式锁。
+- Redis 规定：对不存在的 key 执行 GETBIT 任意 offset 均返回 0，与「该用户位为 0」无法区分；当前策略不依赖区分二者，故无需「EXISTS + 仅 key 不存在时加锁」等方案。锁能力（tryLockLiked/unlockLiked/renewLockLiked）已预留，若后续需强一致读可再接入。

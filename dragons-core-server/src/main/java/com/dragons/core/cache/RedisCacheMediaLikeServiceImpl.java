@@ -53,6 +53,24 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
                     + "redis.call('ZREM', KEYS[3], ARGV[1]); "
                     + "return redis.call('DEL', KEYS[4])";
 
+    /** 回滚点赞（幂等）：仅当 bitmap 该位为 1 时置 0 并双 ZSET -1（score>0 才减）。否则直接 return 0。 */
+    private static final String LUA_ROLLBACK_LIKE =
+            "local b = redis.call('GETBIT', KEYS[1], tonumber(ARGV[2])); "
+                    + "if b == 0 then return 0 end; "
+                    + "redis.call('SETBIT', KEYS[1], tonumber(ARGV[2]), 0); "
+                    + "local s1 = redis.call('ZSCORE', KEYS[2], ARGV[1]); if s1 and tonumber(s1) > 0 then redis.call('ZINCRBY', KEYS[2], -1, ARGV[1]); end; "
+                    + "local s2 = redis.call('ZSCORE', KEYS[3], ARGV[1]); if s2 and tonumber(s2) > 0 then redis.call('ZINCRBY', KEYS[3], -1, ARGV[1]); end; "
+                    + "return 1";
+
+    /** 回滚取消点赞（幂等）：仅当 bitmap 该位为 0 时置 1 并双 ZSET +1。否则直接 return 0。 */
+    private static final String LUA_ROLLBACK_UNLIKE =
+            "local b = redis.call('GETBIT', KEYS[1], tonumber(ARGV[2])); "
+                    + "if b == 1 then return 0 end; "
+                    + "redis.call('SETBIT', KEYS[1], tonumber(ARGV[2]), 1); "
+                    + "redis.call('ZINCRBY', KEYS[2], 1, ARGV[1]); "
+                    + "redis.call('ZINCRBY', KEYS[3], 1, ARGV[1]); "
+                    + "return 1";
+
     public RedisCacheMediaLikeServiceImpl(StringRedisTemplate stringRedisTemplate) {
         this.stringRedisTemplate = stringRedisTemplate;
     }
@@ -242,6 +260,50 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
             log.info("evictMediaLikeData success mediaId={}", mediaId);
         } catch (Exception e) {
             log.error("evictMediaLikeData failed mediaId={} error={}", mediaId, e.getMessage());
+        }
+    }
+
+    /** 撤销一次点赞（幂等）：仅当位图为 1 时置 0 并 ZSET -1。 */
+    @Override
+    public void rollbackLike(Long mediaId, Long userId, Byte category) {
+        if (mediaId == null || userId == null || category == null) {
+            return;
+        }
+        String likedKey = LIKED_BITMAP_PREFIX + mediaId;
+        String mediaIdStr = mediaId.toString();
+        String userIdStr = userId.toString();
+        List<String> keys = List.of(likedKey, RANK_KEY_ALL, rankKeyByCategory(category));
+        try {
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+            script.setScriptText(LUA_ROLLBACK_LIKE);
+            script.setResultType(Long.class);
+            stringRedisTemplate.execute(script, keys, mediaIdStr, userIdStr);
+            log.info("rollbackLike success mediaId={} userId={} category={}", mediaId, userId, category);
+        } catch (Exception e) {
+            log.error("rollbackLike failed mediaId={} userId={} category={} error={}", mediaId, userId, category, e.getMessage());
+            throw e;
+        }
+    }
+
+    /** 撤销一次取消点赞（幂等）：仅当位图为 0 时置 1 并 ZSET +1。 */
+    @Override
+    public void rollbackUnlike(Long mediaId, Long userId, Byte category) {
+        if (mediaId == null || userId == null || category == null) {
+            return;
+        }
+        String likedKey = LIKED_BITMAP_PREFIX + mediaId;
+        String mediaIdStr = mediaId.toString();
+        String userIdStr = userId.toString();
+        List<String> keys = List.of(likedKey, RANK_KEY_ALL, rankKeyByCategory(category));
+        try {
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+            script.setScriptText(LUA_ROLLBACK_UNLIKE);
+            script.setResultType(Long.class);
+            stringRedisTemplate.execute(script, keys, mediaIdStr, userIdStr);
+            log.info("rollbackUnlike success mediaId={} userId={} category={}", mediaId, userId, category);
+        } catch (Exception e) {
+            log.error("rollbackUnlike failed mediaId={} userId={} category={} error={}", mediaId, userId, category, e.getMessage());
+            throw e;
         }
     }
 

@@ -6,7 +6,7 @@ import java.util.Optional;
 /**
  * 媒体点赞 Redis 缓存服务（media:rank:* ZSET + media:liked:* 位图）。
  * <p>
- * 按 Redis_DESIGN.md：点赞/取消点赞仅写 Redis ZSET，定时任务回写 DB。
+ * 按 Redis_DESIGN.md：点赞/取消点赞先改 Redis（Lua）→ 发 MQ → 消费者事务落库，失败回滚 Redis。
  * 使用位图（BITMAP）记录「用户已赞」：offset=userId，bit=1 表示已赞；适合 userId 连续且范围有界的场景。
  * </p>
  *
@@ -77,6 +77,16 @@ public interface RedisCacheMediaLikeService {
      * @param mediaId 媒体ID
      */
     void evictMediaLikeData(Long mediaId);
+
+    /**
+     * 回滚一次「点赞」（幂等）：仅当位图该用户位为 1 时置 0 并双 ZSET -1（score&gt;0 才减）；否则不操作。
+     */
+    void rollbackLike(Long mediaId, Long userId, Byte category);
+
+    /**
+     * 回滚一次「取消点赞」（幂等）：仅当位图该用户位为 0 时置 1 并双 ZSET +1；否则不操作。
+     */
+    void rollbackUnlike(Long mediaId, Long userId, Byte category);
 
     /**
      * 排行榜单项：媒体ID与点赞数（来自 ZSET score）。

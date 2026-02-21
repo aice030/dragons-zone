@@ -26,4 +26,10 @@ public interface MediaMapper extends BaseMapper<Media> {
      */
     List<Media> listMediaInZone(@Param("zoneUserId") long zoneUserId, @Param("category") Byte category,
                                 @Param("offset") long offset, @Param("limit") int limit);
+
+    /** 点赞落库：like_count+1，like_count_update_time=NOW()。MQ 消费者事务内调用。 */
+    int incrementLikeCount(@Param("mediaId") Long mediaId);
+
+    /** 取消点赞落库：like_count-1（SQL 内 GREATEST(0, ...)）。MQ 消费者事务内调用。 */
+    int decrementLikeCount(@Param("mediaId") Long mediaId);
 }

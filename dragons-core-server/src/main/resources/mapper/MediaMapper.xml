@@ -25,4 +25,20 @@
         ORDER BY m.update_time DESC, m.id DESC
         LIMIT #{offset}, #{limit}
     </select>
+
+    <!-- 点赞落库：like_count+1，MQ 消费者调用 -->
+    <update id="incrementLikeCount">
+        UPDATE media
+        SET like_count = IFNULL(like_count, 0) + 1,
+            like_count_update_time = NOW()
+        WHERE id = #{mediaId}
+    </update>
+
+    <!-- 取消点赞落库：like_count-1 且不小于 0，MQ 消费者调用 -->
+    <update id="decrementLikeCount">
+        UPDATE media
+        SET like_count = GREATEST(0, IFNULL(like_count, 0) - 1),
+            like_count_update_time = NOW()
+        WHERE id = #{mediaId}
+    </update>
 </mapper>

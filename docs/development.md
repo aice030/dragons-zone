@@ -163,9 +163,9 @@ dragons-zone/
 - [x] 媒体审核驳回接口（POST /api/media/audit/reject）- 批量审核驳回，将 `state=6`（待审核）改为 `state=7`（审核未通过）；仅管理员或作者可操作；非事务性，返回失败项列表
 - [x] 待审核媒体列表接口（GET /api/media/audit/pending）- 分页查询 `state=6`（待审核）的媒体列表；仅管理员或作者可访问
 - [x] 查询媒体所属成员专区接口（GET /api/mediaVisible/{mediaId}/zones）- 根据媒体ID查询该媒体属于哪些成员专区；返回成员专区ID列表；**游客模式**，无需登录/请求头
-- [x] 点赞接口（POST /api/media/{id}/like）- 需登录；仅 state=0 可点赞；Redis bitmap 保证一人一次，ZSET 更新排行，同步落库 user_like_record
-- [x] 取消点赞接口（POST /api/media/{id}/unlike）- 需登录；从 Redis bitmap 置 0 并 ZSET -1，同步删除 user_like_record
-- [x] 查询是否已赞接口（GET /api/userLikeRecord/media/{mediaId}/status）- 需登录；先查 Redis bitmap，未命中查 DB 并写回，返回 true/false；当前无锁
+- [x] 点赞接口（POST /api/media/{id}/like）- 需登录；仅 state=0 可点赞；先 Redis Lua 更新 ZSET+位图，再发 MQ，消费者事务落库 media.like_count 与 user_like_record，失败则回滚 Redis
+- [x] 取消点赞接口（POST /api/media/{id}/unlike）- 需登录；先 Redis Lua 更新 ZSET+位图，再发 MQ，消费者事务落库，失败则回滚 Redis
+- [x] 查询是否已赞接口（GET /api/userLikeRecord/media/{mediaId}/status）- 需登录；只查 Redis bitmap，以 Redis 为准，未命中视为未赞，返回 true/false
 - [x] 热门排行榜接口（GET /api/mediaVisible/rank）- 游客可访问；按点赞数 Top N，返回 HotListItem 列表（id、category、title、description、coverUrl、likeCount）；category 筛选，size 默认 20 最大 100；不做分页、不做专区
 
 #### 步骤4：树洞功能接口 ✅
@@ -208,7 +208,7 @@ dragons-zone/
 - [ ] 用户体验优化
 
 ### 待实现（点赞与排行榜）
-- [ ] 点赞数定期落库（ZSET 定时回写 media.like_count）
+- [ ] 点赞/取消点赞 MQ 消费者与 Redis 回滚（见 Redis_DESIGN.md：先 Redis → MQ → 事务落库，失败回滚 Redis）
 - [ ] 点赞相关前后端联调（点赞/取消点赞/是否已赞）
 - [ ] 前端热门排行榜界面
 

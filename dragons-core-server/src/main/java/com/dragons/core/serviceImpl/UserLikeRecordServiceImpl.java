@@ -60,14 +60,8 @@ public class UserLikeRecordServiceImpl extends ServiceImpl<UserLikeRecordMapper,
     /**
      * 查询当前用户是否已赞指定媒体。仅 state=0 的媒体可查。
      * <p>
-     * <b>查询与写回流程</b>：
-     * <ol>
-     *   <li>先查 Redis：key 为 {@code media:liked:{mediaId}}，offset=userId。若该位为 1，直接返回 true，不查 DB。</li>
-     *   <li>若该 key 在 Redis 中不存在（该媒体从未有过任何点赞缓存），或 key 存在但该位为 0：Redis 的 GETBIT 在 key 不存在时也返回 0，
-     *       无法区分这两种情况，统一查 DB（user_like_record 表）得到真实结果。</li>
-     *   <li>写回缓存：调用 {@link RedisCacheMediaLikeService#setLiked}。若 key 不存在，SETBIT 会自动创建 {@code media:liked:{mediaId}}，
-     *       只写入当前用户这一位（0 或 1），下次再查可直接命中缓存。</li>
-     * </ol>
+     * 只读 Redis bitmap（{@code media:liked:{mediaId}}，offset=userId）。点赞/取消点赞已先写 Redis 再 MQ 同步 DB，
+     * 以 Redis 为准；缓存未命中（key 不存在或该位为 0）时视为未赞，不查 DB。
      */
     @Override
     public boolean getLikeStatus(Long mediaId, Long currentUserId) {
@@ -77,22 +71,17 @@ public class UserLikeRecordServiceImpl extends ServiceImpl<UserLikeRecordMapper,
         if (currentUserId == null) {
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
         }
-        // 步骤1：校验媒体存在且 state=0（仅已审核通过的媒体可查已赞状态）
+        // 校验媒体存在且 state=0（仅已审核通过的媒体可查已赞状态）
         Media media = mediaMapper.selectById(mediaId);
         if (media == null || media.getState() == null || media.getState() != 0) {
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
-        // 步骤2：先查 Redis bitmap，命中（位为 1）则直接返回已赞
+        // 只查 Redis bitmap（点赞/取消点赞已先写 Redis 再 MQ 同步 DB，以 Redis 为准）
         Optional<Boolean> fromCache = redisCacheMediaLikeService.getLikedFromCache(mediaId, currentUserId);
         if (fromCache.isPresent()) {
-            log.info("getLikeStatus cache hit mediaId={} userId={} liked=true", mediaId, currentUserId);
             return fromCache.get();
         }
-        // 步骤3：缓存未命中，查 DB（user_like_record 表）
-        boolean dbLiked = existsByUserIdAndMediaId(currentUserId, mediaId);
-        log.info("getLikeStatus db query mediaId={} userId={} liked={}", mediaId, currentUserId, dbLiked);
-        // 步骤4：写回 Redis，下次可命中；key 不存在时 SETBIT 会自动创建
-        redisCacheMediaLikeService.setLiked(mediaId, currentUserId, dbLiked);
-        return dbLiked;
+        // 缓存未命中（key 不存在或该位为 0）：视为未赞
+        return false;
     }
 }
