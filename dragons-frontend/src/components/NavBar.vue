@@ -8,11 +8,78 @@
         </slot>
       </div>
 
-      <!-- 图片&视频集按钮（独立定位在logo左侧） -->
+      <!-- 热门内容（独立定位在 logo 左侧，下拉弹窗） -->
+      <div class="hot-content-dropdown" @click.stop>
+        <button
+          type="button"
+          class="nav-media-collection-btn"
+          :class="{ active: showHotDropdown }"
+          @click="toggleHotDropdown"
+        >
+          热门内容
+          <svg class="dropdown-arrow" :class="{ open: showHotDropdown }" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <Transition name="dropdown">
+          <div v-if="showHotDropdown" class="hot-dropdown-menu">
+            <div class="hot-dropdown-header">
+              <span class="hot-dropdown-title">热门内容</span>
+              <div class="hot-dropdown-filter">
+                <button
+                  type="button"
+                  class="hot-filter-btn"
+                  :class="{ active: hotCategory === null }"
+                  @click="switchHotCategory(null)"
+                >
+                  全部
+                </button>
+                <span class="hot-filter-sep">|</span>
+                <button
+                  type="button"
+                  class="hot-filter-btn"
+                  :class="{ active: hotCategory === 0 }"
+                  @click="switchHotCategory(0)"
+                >
+                  图片
+                </button>
+                <span class="hot-filter-sep">|</span>
+                <button
+                  type="button"
+                  class="hot-filter-btn"
+                  :class="{ active: hotCategory === 1 }"
+                  @click="switchHotCategory(1)"
+                >
+                  视频
+                </button>
+              </div>
+            </div>
+            <div v-if="hotLoading" class="hot-dropdown-loading">加载中…</div>
+            <div v-else-if="hotError" class="hot-dropdown-error">{{ hotError }}</div>
+            <div v-else-if="!hotList.length" class="hot-dropdown-empty">暂无数据</div>
+            <div v-else class="hot-dropdown-list">
+              <button
+                v-for="(item, index) in hotList"
+                :key="item.id"
+                type="button"
+                class="hot-dropdown-item"
+                @click="goToMedia(item.id)"
+              >
+                <span class="hot-item-rank">{{ index + 1 }}</span>
+                <img v-if="item.coverUrl" :src="item.coverUrl" :alt="item.title" class="hot-item-cover" />
+                <span class="hot-item-placeholder" v-else>无封面</span>
+                <div class="hot-item-info">
+                  <span class="hot-item-title">{{ item.title }}</span>
+                  <span class="hot-item-likes">❤ {{ item.likeCount ?? 0 }}</span>
+                </div>
+              </button>
+            </div>
+          </div>
+        </Transition>
+      </div>
+      <!-- 图片&视频集（独立定位在 logo 左侧） -->
       <div class="nav-media-collection">
-        <router-link to="/browse" class="nav-media-collection-btn">
-          图片&视频集
-        </router-link>
+        <router-link to="/browse" class="nav-media-collection-btn">图片&视频集</router-link>
       </div>
 
       <!-- 中间：Logo -->
@@ -166,6 +233,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { getMembers } from '@/config/members'
 import { getUserMenuItems } from '@/config/userMenu'
+import { getMediaRank } from '@/api/media'
 import LoginModal from '@/components/LoginModal.vue'
 import RegisterModal from '@/components/RegisterModal.vue'
 import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
@@ -183,6 +251,13 @@ const members = ref(getMembers())
 // 下拉菜单状态
 const showUserMenu = ref(false)
 const showMemberDropdown = ref(false)
+const showHotDropdown = ref(false)
+
+// 热门内容下拉数据与筛选（null=全部，0=图片，1=视频）
+const hotList = ref([])
+const hotLoading = ref(false)
+const hotError = ref('')
+const hotCategory = ref(null)
 
 // 弹窗状态
 const showLoginModal = ref(false)
@@ -204,6 +279,39 @@ function toggleUserMenu() {
 
 function toggleMemberDropdown() {
   showMemberDropdown.value = !showMemberDropdown.value
+}
+
+function toggleHotDropdown() {
+  showHotDropdown.value = !showHotDropdown.value
+  // 每次展开下拉时都重新拉取排行榜，保证点赞等操作后能看到最新数据
+  if (showHotDropdown.value) {
+    loadHotRank()
+  }
+}
+
+async function loadHotRank() {
+  hotLoading.value = true
+  hotError.value = ''
+  try {
+    const res = await getMediaRank(hotCategory.value, 20)
+    hotList.value = Array.isArray(res?.data) ? res.data : []
+  } catch (e) {
+    hotError.value = '加载失败，请稍后重试'
+    hotList.value = []
+  } finally {
+    hotLoading.value = false
+  }
+}
+
+function switchHotCategory(category) {
+  if (hotCategory.value === category) return
+  hotCategory.value = category
+  loadHotRank()
+}
+
+function goToMedia(mediaId) {
+  showHotDropdown.value = false
+  router.push(`/media/${mediaId}`)
 }
 
 function selectZone(memberId, memberName) {
@@ -247,8 +355,10 @@ function onForgotPasswordSuccess() {
 function handleClickOutside(event) {
   const memberDropdown = event.target.closest('.member-zone-dropdown')
   const userDropdown = event.target.closest('.user-menu-dropdown')
+  const hotDropdown = event.target.closest('.hot-content-dropdown')
   if (!memberDropdown) showMemberDropdown.value = false
   if (!userDropdown) showUserMenu.value = false
+  if (!hotDropdown) showHotDropdown.value = false
 }
 
 onMounted(() => {
@@ -350,7 +460,16 @@ onBeforeUnmount(() => {
   border-radius: 50%;
 }
 
-/* 图片&视频集区域（独立定位在logo左侧） */
+/* 热门内容（独立定位在 logo 左侧，-24rem） */
+.hot-content-dropdown {
+  position: absolute;
+  left: 50%;
+  transform: translateX(calc(-50% - 22rem));
+  display: flex;
+  align-items: center;
+}
+
+/* 图片&视频集（独立定位在 logo 左侧） */
 .nav-media-collection {
   position: absolute;
   left: 50%;
@@ -372,11 +491,168 @@ onBeforeUnmount(() => {
   text-decoration: none;
   display: inline-flex;
   align-items: center;
+  gap: 0.5rem;
 }
 
 .nav-media-collection-btn:hover {
   background: rgba(74, 144, 226, 0.15);
   color: #4a90e2;
+}
+
+.nav-media-collection-btn.active {
+  background: rgba(74, 144, 226, 0.2);
+  color: #4a90e2;
+}
+
+.hot-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  min-width: 320px;
+  max-width: 90vw;
+  max-height: 50vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+}
+
+.hot-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
+}
+
+.hot-dropdown-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #0d0d0d;
+}
+
+.hot-dropdown-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.hot-filter-btn {
+  padding: 0.35rem 0.6rem;
+  border: none;
+  background: none;
+  color: #7f8c8d;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.hot-filter-btn:hover {
+  color: #4a90e2;
+  background: rgba(74, 144, 226, 0.08);
+}
+
+.hot-filter-btn.active {
+  color: #4a90e2;
+  font-weight: 500;
+  background: rgba(74, 144, 226, 0.12);
+}
+
+.hot-filter-sep {
+  color: rgba(0, 0, 0, 0.2);
+  font-size: 0.8rem;
+  user-select: none;
+}
+
+.hot-dropdown-loading,
+.hot-dropdown-error,
+.hot-dropdown-empty {
+  padding: 1.5rem 1rem;
+  text-align: center;
+  color: #7f8c8d;
+  font-size: 0.9rem;
+}
+
+.hot-dropdown-error {
+  color: #e74c3c;
+}
+
+.hot-dropdown-list {
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+.hot-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.hot-dropdown-item:hover {
+  background: rgba(74, 144, 226, 0.1);
+}
+
+.hot-item-rank {
+  flex-shrink: 0;
+  width: 1.5rem;
+  font-weight: 600;
+  color: #4a90e2;
+  font-size: 0.9rem;
+}
+
+.hot-item-cover {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.hot-item-placeholder {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: #95a5a6;
+}
+
+.hot-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.hot-item-title {
+  font-size: 0.9rem;
+  color: #2c3e50;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hot-item-likes {
+  font-size: 0.8rem;
+  color: #7f8c8d;
 }
 
 /* 成员专区区域（独立定位在logo右侧） */

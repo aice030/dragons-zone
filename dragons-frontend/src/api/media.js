@@ -61,6 +61,20 @@ export function getMediaList(page = 1, size = 20, category = null, zoneUserId = 
 }
 
 /**
+ * 获取热门内容排行榜
+ * @param {string|number|null} category - 不传=全部，0=图片，1=视频
+ * @param {number} size - 返回条数，默认 20，最大 100
+ * @returns {Promise} HotListItem[] { id, category, title, description, coverUrl, likeCount }
+ */
+export function getMediaRank(category = null, size = 20) {
+  const params = { size }
+  if (category !== null && category !== undefined && category !== '') {
+    params.category = category
+  }
+  return api.get('/api/mediaVisible/rank', { params })
+}
+
+/**
  * 获取媒体详情
  * @param {number} mediaId - 媒体ID
  * @returns {Promise} 媒体详情数据

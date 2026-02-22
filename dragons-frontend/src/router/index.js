@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Welcome from '@/views/Welcome.vue'
 import MediaBrowse from '@/views/MediaBrowse.vue'
-import MediaDetail from '@/views/MediaDetail.vue'
+import MediaDetailPage from '@/views/MediaDetailPage.vue'
 import MyUploads from '@/views/MyUploads.vue'
 import UploadMedia from '@/views/UploadMedia.vue'
 import ResourceManage from '@/views/ResourceManage.vue'
@@ -23,7 +23,7 @@ const router = createRouter({
     {
       path: '/media/:id',
       name: 'MediaDetail',
-      component: MediaDetail
+      component: MediaDetailPage
     },
     {
       path: '/my-uploads',
