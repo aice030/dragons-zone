@@ -1545,7 +1545,7 @@ Authorization: Bearer <JWT_TOKEN>
 **业务逻辑**：
 1. 根据 category 确定 Redis key：`media:rank:all` 或 `media:rank:0` / `media:rank:1`
 2. ZREVRANGE WITHSCORES 取前 (size+10) 条，过滤 state!=0 后取前 size 条，保证返回满 size 条（若 ZSET 不足则返回实际条数）
-3. 按 mediaIds 顺序批量查 media:core（缺则加锁查 DB 并回写），组装 HotListItem（likeCount 取自 ZSET score）
+3. 按 mediaIds 顺序批量查 media:core（缺则加锁查 DB 并回写），组装 HotListItem（likeCount 取自 ZSET score；media:core 不存 likeCount）
 4. ZSET 不存在时返回空数组
 
 ---
@@ -1554,7 +1554,7 @@ Authorization: Bearer <JWT_TOKEN>
 - 点赞 → Redis ZINCRBY（all + category 双 key，Lua）；取消点赞 → 先判 score>0 再 ZINCRBY -1（Lua）
 - 查询是否已赞 → 只查 Redis（media:liked:{mediaId} bitmap GETBIT），未命中视为未赞
 - 排行榜 → ZREVRANGE 取 Top N；媒体删除/下架 → ZREM 三 key；审核通过 → 若 DB 有 like_count 则 ZADD 初始化
-- 列表/详情展示点赞数：先读 Redis ZSET score，不存在再用 media:core/DB 的 likeCount
+- 列表/详情展示点赞数：先读 Redis ZSET score，未在榜时再用 DB 的 likeCount（media:core 不存 likeCount）
 
 ---
 

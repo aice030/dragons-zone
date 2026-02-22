@@ -758,7 +758,7 @@ mvn spring-boot:run
 ### 缓存与分布式锁实现（按 Redis_DESIGN.md）
 
 - ✅ **缓存架构**
-  - `media:core:{mediaId}`：媒体核心数据缓存（TTL 600秒），仅缓存 `state=0` 的媒体
+  - `media:core:{mediaId}`：媒体核心数据缓存（TTL 600秒），仅缓存 `state=0` 的媒体；不存 likeCount/likeCountUpdateTime，点赞数由 ZSET 统一提供
   - `media:list:{zoneUserId}:{category}:{page}:{size}`：媒体列表ID缓存（TTL 300秒）
   - `media:my:{uploaderId}:{category}:{page}:{size}`：我的上传列表ID缓存（TTL 300秒）
   - 空值缓存：`__NULL__` 标记（TTL 60秒），防止缓存穿透

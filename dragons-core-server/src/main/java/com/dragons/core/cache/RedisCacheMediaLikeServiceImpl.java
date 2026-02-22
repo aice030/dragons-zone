@@ -71,6 +71,13 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
                     + "redis.call('ZINCRBY', KEYS[3], 1, ARGV[1]); "
                     + "return 1";
 
+    /** 原子写回：SETBIT 位图 + 双 ZSET ZADD（先 DB 再 Redis 时用，保证位图与 score 同成功）。KEYS: likedKey, rankAll, rankCategory；ARGV: userId, mediaIdStr, score, bit(0/1)。 */
+    private static final String LUA_SET_LIKED_AND_SCORE =
+            "redis.call('SETBIT', KEYS[1], tonumber(ARGV[1]), tonumber(ARGV[4])); "
+                    + "redis.call('ZADD', KEYS[2], ARGV[3], ARGV[2]); "
+                    + "redis.call('ZADD', KEYS[3], ARGV[3], ARGV[2]); "
+                    + "return 1";
+
     public RedisCacheMediaLikeServiceImpl(StringRedisTemplate stringRedisTemplate) {
         this.stringRedisTemplate = stringRedisTemplate;
     }
@@ -206,6 +213,42 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
     }
 
     @Override
+    public void setScoreForMedia(Long mediaId, Byte category, long count) {
+        if (mediaId == null) {
+            return;
+        }
+        String member = mediaId.toString();
+        try {
+            stringRedisTemplate.opsForZSet().add(RANK_KEY_ALL, member, count);
+            stringRedisTemplate.opsForZSet().add(rankKeyByCategory(category), member, count);
+            log.info("setScoreForMedia success mediaId={} category={} count={}", mediaId, category, count);
+        } catch (Exception e) {
+            log.error("setScoreForMedia failed mediaId={} category={} count={} error={}", mediaId, category, count, e.getMessage());
+        }
+    }
+
+    @Override
+    public void setLikedAndScoreForMedia(Long mediaId, Long userId, Byte category, long count, boolean liked) {
+        if (mediaId == null || userId == null) {
+            return;
+        }
+        String likedKey = LIKED_BITMAP_PREFIX + mediaId;
+        List<String> keys = List.of(likedKey, RANK_KEY_ALL, rankKeyByCategory(category));
+        String mediaIdStr = mediaId.toString();
+        String scoreStr = String.valueOf(count);
+        String bitStr = liked ? "1" : "0";
+        try {
+            DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+            script.setScriptText(LUA_SET_LIKED_AND_SCORE);
+            script.setResultType(Long.class);
+            stringRedisTemplate.execute(script, keys, userId.toString(), mediaIdStr, scoreStr, bitStr);
+            log.info("setLikedAndScoreForMedia success mediaId={} userId={} category={} count={} liked={}", mediaId, userId, category, count, liked);
+        } catch (Exception e) {
+            log.error("setLikedAndScoreForMedia failed mediaId={} userId={} category={} count={} liked={} error={}", mediaId, userId, category, count, liked, e.getMessage());
+        }
+    }
+
+    @Override
     public List<RedisCacheMediaLikeService.RankEntry> getRankMediaIdsWithScores(Byte category, int limit) {
         if (limit <= 0) {
             return List.of();
@@ -241,6 +284,23 @@ public class RedisCacheMediaLikeServiceImpl implements RedisCacheMediaLikeServic
         } catch (Exception e) {
             log.error("getRankMediaIdsWithScores failed category={} limit={} error={}", category, limit, e.getMessage());
             return List.of();
+        }
+    }
+
+    @Override
+    public Optional<Long> getLikeCountFromRank(Long mediaId) {
+        if (mediaId == null) {
+            return Optional.empty();
+        }
+        try {
+            Double score = stringRedisTemplate.opsForZSet().score(RANK_KEY_ALL, mediaId.toString());
+            if (score == null) {
+                return Optional.empty();
+            }
+            return Optional.of(score.longValue());
+        } catch (Exception e) {
+            log.warn("getLikeCountFromRank failed mediaId={} error={}", mediaId, e.getMessage());
+            return Optional.empty();
         }
     }
 

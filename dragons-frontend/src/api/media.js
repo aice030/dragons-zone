@@ -79,6 +79,36 @@ export function getMediaDownloadUrl(mediaId) {
 }
 
 /**
+ * 点赞（需登录）
+ * POST /api/media/{id}/like
+ * @param {number} mediaId - 媒体ID
+ * @returns {Promise}
+ */
+export function likeMedia(mediaId) {
+  return api.post(`/api/media/${mediaId}/like`)
+}
+
+/**
+ * 取消点赞（需登录）
+ * POST /api/media/{id}/unlike
+ * @param {number} mediaId - 媒体ID
+ * @returns {Promise}
+ */
+export function unlikeMedia(mediaId) {
+  return api.post(`/api/media/${mediaId}/unlike`)
+}
+
+/**
+ * 查询当前用户是否已赞某媒体（需登录）
+ * GET /api/userLikeRecord/media/{mediaId}/status
+ * @param {number} mediaId - 媒体ID
+ * @returns {Promise<{ data: boolean }>} data: true 已点赞，false 未点赞
+ */
+export function getLikeStatus(mediaId) {
+  return api.get(`/api/userLikeRecord/media/${mediaId}/status`)
+}
+
+/**
  * 获取"我的上传"列表（需登录）
  * @param {number} page - 页码（默认1）
  * @param {number} size - 每页数量（默认10，最大100）

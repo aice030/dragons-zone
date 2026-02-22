@@ -147,7 +147,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { getMediaDetail, getMediaDownloadUrl } from '@/api/media'
+import { getMediaDetail, getMediaDownloadUrl, getLikeStatus, likeMedia, unlikeMedia } from '@/api/media'
 
 // Props：接收媒体ID和媒体列表
 const props = defineProps({
@@ -252,6 +252,13 @@ const loadMediaDetail = async () => {
         error.value = true
         errorMessage.value = '无法加载媒体资源'
       }
+      // 已登录时查询当前用户是否已赞
+      try {
+        const statusRes = await getLikeStatus(props.mediaId)
+        isLiked.value = statusRes?.data === true
+      } catch (_) {
+        isLiked.value = false
+      }
     } else {
       error.value = true
       errorMessage.value = '媒体不存在'
@@ -300,38 +307,40 @@ const formatTime = (timeString) => {
 }
 
 // 点赞处理函数
-const handleLike = () => {
-  // 防刷检查
-  if (isThrottling.value) {
-    return
-  }
-  
-  // 设置防刷状态
+const handleLike = async () => {
+  if (isThrottling.value || !props.mediaId) return
   isThrottling.value = true
-  
-  // 切换点赞状态
-  if (isLiked.value) {
-    // 取消点赞
+  const wasLiked = isLiked.value
+  const prevCount = likeCount.value
+  // 乐观更新
+  if (wasLiked) {
     isLiked.value = false
     likeCount.value = Math.max(0, likeCount.value - 1)
-    // TODO: 调用后端API - 取消点赞（likeCount -1）
-    // await cancelLike(props.mediaId)
   } else {
-    // 点赞
     isLiked.value = true
     likeCount.value += 1
-    // TODO: 调用后端API - 点赞（likeCount +1）
-    // await likeMedia(props.mediaId)
   }
-  
-  // 500ms 后解除防刷状态
-  if (throttleTimer) {
-    clearTimeout(throttleTimer)
+  try {
+    if (wasLiked) {
+      await unlikeMedia(props.mediaId)
+    } else {
+      await likeMedia(props.mediaId)
+    }
+  } catch (err) {
+    isLiked.value = wasLiked
+    likeCount.value = prevCount
+    if (err.response?.status === 401) {
+      console.warn('点赞需先登录')
+    } else {
+      console.error('点赞操作失败:', err)
+    }
+  } finally {
+    if (throttleTimer) clearTimeout(throttleTimer)
+    throttleTimer = setTimeout(() => {
+      isThrottling.value = false
+      throttleTimer = null
+    }, 500)
   }
-  throttleTimer = setTimeout(() => {
-    isThrottling.value = false
-    throttleTimer = null
-  }, 500)
 }
 
 // 下载处理函数
@@ -391,8 +400,7 @@ watch(() => mediaDetail.value?.likeCount, (newCount) => {
 watch(() => props.mediaId, (newId) => {
   if (newId) {
     loadMediaDetail()
-    // 重置点赞状态（切换媒体时）
-    isLiked.value = false
+    // 切换媒体时 isLiked 由 loadMediaDetail 内 getLikeStatus 结果设置
     // 清除防刷定时器
     if (throttleTimer) {
       clearTimeout(throttleTimer)

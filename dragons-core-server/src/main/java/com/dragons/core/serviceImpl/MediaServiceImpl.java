@@ -13,6 +13,7 @@ import com.dragons.core.cache.RedisCacheMediaListService;
 import com.dragons.core.cache.RedisCacheMediaLikeService;
 import com.dragons.core.service.IMediaService;
 import com.dragons.core.service.IMediaVisibleService;
+import com.dragons.core.service.MediaLikePersistService;
 import com.dragons.core.service.IUserService;
 import com.dragons.core.mq.MediaLikeMqProducer;
 import com.dragons.core.storage.StorageService;
@@ -59,6 +60,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final RedisCacheMediaCoreService redisCacheMediaCoreService;
     private final RedisCacheMediaListService redisCacheMediaListService;
     private final RedisCacheMediaLikeService redisCacheMediaLikeService;
+    private final MediaLikePersistService mediaLikePersistService;
     private final MediaLikeMqProducer mediaLikeMqProducer;
 
     /**
@@ -82,6 +84,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                             RedisCacheMediaCoreService redisCacheMediaCoreService,
                             RedisCacheMediaListService redisCacheMediaListService,
                             RedisCacheMediaLikeService redisCacheMediaLikeService,
+                            MediaLikePersistService mediaLikePersistService,
                             MediaLikeMqProducer mediaLikeMqProducer) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
@@ -89,6 +92,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         this.redisCacheMediaCoreService = redisCacheMediaCoreService;
         this.redisCacheMediaListService = redisCacheMediaListService;
         this.redisCacheMediaLikeService = redisCacheMediaLikeService;
+        this.mediaLikePersistService = mediaLikePersistService;
         this.mediaLikeMqProducer = mediaLikeMqProducer;
     }
 
@@ -421,7 +425,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
         if (cachedMedia != null) {
             // 缓存中仅存储 state=0（已审核通过）的媒体，游客/任何人可查看
-            return convertToMediaDetailResult(cachedMedia);
+            MediaDetailResult r = convertToMediaDetailResult(cachedMedia);
+            r.likeCount = resolveLikeCount(mediaId, cachedMedia);
+            return r;
         }
 
         // 1. 缓存未命中，尝试获取分布式锁，防止缓存击穿
@@ -465,7 +471,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
                 if (cachedMedia != null) {
                     // 1.4 缓存已命中，直接返回
-                    return convertToMediaDetailResult(cachedMedia);
+                    MediaDetailResult r = convertToMediaDetailResult(cachedMedia);
+                    r.likeCount = resolveLikeCount(mediaId, cachedMedia);
+                    return r;
                 }
             }
             
@@ -474,7 +482,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
                 if (cachedMedia != null) {
                     // 其他线程已经写入缓存，直接返回
-                    return convertToMediaDetailResult(cachedMedia);
+                    MediaDetailResult r = convertToMediaDetailResult(cachedMedia);
+                    r.likeCount = resolveLikeCount(mediaId, cachedMedia);
+                    return r;
                 }
                 
                 // 3.缓存仍未命中，从数据库查询
@@ -518,6 +528,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
                 // 转换为 MediaDetailResult（会自动处理 coverUrl）
                 result = convertToMediaDetailResult(media);
+                result.likeCount = resolveLikeCount(mediaId, media);
                 // 仅 state=0（已审核通过）时写入缓存，供后续游客查询命中
                 // 将 coverUrl 设置到 Media 对象中，一起缓存
                 if (media.getState() != null && media.getState() == 0) {
@@ -552,6 +563,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 
                 // 转换为 MediaDetailResult（会自动处理 coverUrl）
                 result = convertToMediaDetailResult(media);
+                result.likeCount = resolveLikeCount(mediaId, media);
                 // 注意：获取锁失败时，不写入缓存，避免并发写入问题
             }
         } catch (BusinessException e) {
@@ -863,7 +875,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
-     * 点赞流程：校验 → Redis(位图+ZSET) → 发 MQ → 写入数据库；MQ 落库失败则回滚 Redis，保证与 DB 一致。
+     * 点赞：校验后走一种同步方式。当前使用「先 DB 再 Redis」；高并发时改为调用 likeSyncViaMq（注释本行、取消下一行注释）。
      */
     @Override
     public void like(Long mediaId, Long currentUserId) {
@@ -881,23 +893,12 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (category == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
-        // 1. 先改 Redis（Lua 原子：位图置 1 + 双 ZSET +1）
-        boolean updated = redisCacheMediaLikeService.like(mediaId, currentUserId, category);
-        if (!updated) {
-            return; // 已赞过，幂等
-        }
-        // 2. 发 MQ，消费者事务落库；发送失败则回滚 Redis
-        try {
-            mediaLikeMqProducer.send(new MediaLikeEvent(MediaLikeEvent.Operation.LIKE, mediaId, currentUserId, category));
-        } catch (Exception e) {
-            log.error("like: MQ send failed, rolling back Redis mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
-            redisCacheMediaLikeService.rollbackLike(mediaId, currentUserId, category);
-            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
-        }
+        likeSyncDbFirst(mediaId, currentUserId, category);
+        // likeSyncViaMq(mediaId, currentUserId, category);
     }
 
     /**
-     * 取消点赞流程：校验 → Redis(位图+ZSET) → 发 MQ → 写入数据库；MQ 落库失败则回滚 Redis，保证与 DB 一致。
+     * 取消点赞：校验后走一种同步方式。当前使用「先 DB 再 Redis」；高并发时改为调用 unlikeSyncViaMq（注释本行、取消下一行注释）。
      */
     @Override
     public void unlike(Long mediaId, Long currentUserId) {
@@ -915,12 +916,55 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (category == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
-        // 1. 先改 Redis（Lua 原子：位图置 0 + 双 ZSET -1，仅当 score>0）
+        unlikeSyncDbFirst(mediaId, currentUserId, category);
+        // unlikeSyncViaMq(mediaId, currentUserId, category);
+    }
+
+    /** 点赞同步方式一：先 DB 再 Redis（轻量，无 MQ）。Redis 用 Lua 原子写回位图 + 双 ZSET。 */
+    private void likeSyncDbFirst(Long mediaId, Long currentUserId, Byte category) {
+        if (redisCacheMediaLikeService.getLikedFromCache(mediaId, currentUserId).orElse(false)) {
+            return;
+        }
+        mediaLikePersistService.persist(new MediaLikeEvent(MediaLikeEvent.Operation.LIKE, mediaId, currentUserId, category));
+        Media media = this.getById(mediaId);
+        long likeCount = media != null && media.getLikeCount() != null ? media.getLikeCount() : 0L;
+        redisCacheMediaLikeService.setLikedAndScoreForMedia(mediaId, currentUserId, category, likeCount, true);
+    }
+
+    /** 点赞同步方式二：先 Redis 再 MQ，消费者落库；发送失败回滚 Redis（高并发方案）。切换时在 like() 中注释 DbFirst、取消本方法调用注释。 */
+    @SuppressWarnings("unused")
+    private void likeSyncViaMq(Long mediaId, Long currentUserId, Byte category) {
+        boolean updated = redisCacheMediaLikeService.like(mediaId, currentUserId, category);
+        if (!updated) {
+            return;
+        }
+        try {
+            mediaLikeMqProducer.send(new MediaLikeEvent(MediaLikeEvent.Operation.LIKE, mediaId, currentUserId, category));
+        } catch (Exception e) {
+            log.error("like: MQ send failed, rolling back Redis mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
+            redisCacheMediaLikeService.rollbackLike(mediaId, currentUserId, category);
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /** 取消点赞同步方式一：先 DB 再 Redis（轻量，无 MQ）。Redis 用 Lua 原子写回位图 + 双 ZSET。 */
+    private void unlikeSyncDbFirst(Long mediaId, Long currentUserId, Byte category) {
+        if (!redisCacheMediaLikeService.getLikedFromCache(mediaId, currentUserId).orElse(false)) {
+            return;
+        }
+        mediaLikePersistService.persist(new MediaLikeEvent(MediaLikeEvent.Operation.UNLIKE, mediaId, currentUserId, category));
+        Media media = this.getById(mediaId);
+        long likeCount = media != null && media.getLikeCount() != null ? media.getLikeCount() : 0L;
+        redisCacheMediaLikeService.setLikedAndScoreForMedia(mediaId, currentUserId, category, likeCount, false);
+    }
+
+    /** 取消点赞同步方式二：先 Redis 再 MQ，消费者落库；发送失败回滚 Redis（高并发方案）。切换时在 unlike() 中注释 DbFirst、取消本方法调用注释。 */
+    @SuppressWarnings("unused")
+    private void unlikeSyncViaMq(Long mediaId, Long currentUserId, Byte category) {
         boolean updated = redisCacheMediaLikeService.unlike(mediaId, currentUserId, category);
         if (!updated) {
-            return; // 未赞过，幂等
+            return;
         }
-        // 2. 发 MQ，消费者事务落库；发送失败则回滚 Redis
         try {
             mediaLikeMqProducer.send(new MediaLikeEvent(MediaLikeEvent.Operation.UNLIKE, mediaId, currentUserId, category));
         } catch (Exception e) {
@@ -1594,6 +1638,14 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
+     * 解析点赞数：优先读 Redis ZSET score；未在榜时用 Media.likeCount（仅 DB 有值，media:core 已不存 likeCount）。
+     */
+    private long resolveLikeCount(Long mediaId, Media media) {
+        return redisCacheMediaLikeService.getLikeCountFromRank(mediaId)
+                .orElse(media != null && media.getLikeCount() != null ? media.getLikeCount() : 0L);
+    }
+
+    /**
      * 将 Media 实体转换为 MediaDetailResult
      * 处理 coverUrl：优先使用缓存中的值，如果不存在则重新生成
      *
@@ -1626,7 +1678,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 media.getCoverPath(),
                 coverUrl,
                 media.getUploaderId(),
-                media.getUpdateTime()
+                media.getUpdateTime(),
+                null
         );
     }
 }

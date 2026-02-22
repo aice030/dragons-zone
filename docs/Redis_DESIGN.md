@@ -18,7 +18,7 @@
 - **Caffeine Key格式**：`media:core:{mediaId}`（与Redis保持一致，待实现）
 
 #### 缓存Value
-序列化的 `Media` 实体对象，包含以下字段：
+序列化的 `Media` 实体对象（写入时去掉 likeCount/likeCountUpdateTime，避免与 ZSET 冗余），包含以下字段：
 ```json
 {
   "id": 123,
@@ -29,17 +29,16 @@
   "description": "描述",
   "storagePath": "images/2026/01/21/xxx.jpg",
   "coverPath": "images/2026/01/21/xxx.jpg",
-  "coverUrl": "https://...", 
+  "coverUrl": "https://...",
   "state": 0,
-  "updateTime": "2026-01-31T12:34:56",
-  "likeCount": 0,
-  "likeCountUpdateTime": "2026-01-31T12:34:56"
+  "updateTime": "2026-01-31T12:34:56"
 }
 ```
 
 **字段说明**：
 - `coverUrl`：封面预签名URL（12分钟有效），在写入缓存时动态生成并存储，查询时优先使用缓存中的值
-- 其他字段：与数据库 `media` 表字段一一对应
+- **不存 likeCount/likeCountUpdateTime**：点赞数统一由排行榜 ZSET 提供，列表/详情通过 `getLikeCountFromRank(mediaId)` 解析
+- 其他字段：与数据库 `media` 表对应字段一致
 
 #### 过期时间
 - **Redis TTL**：600秒（10分钟）
@@ -179,9 +178,20 @@
 ### 设计要点
 - 使用 Redis ZSET 存储点赞数并排序：member = mediaId，score = likeCount（仅记录 media id，与列表缓存一致）。
 - 按分类分桶：`category=null`（全部）、`0`（图片）、`1`（视频）各一个 ZSET，便于「分类 TopN」查询。
-- **写流程**：点赞/取消点赞时先改 Redis（Lua 更新 ZSET + 已赞位图）→ 发 MQ → 消费者事务更新 `media.like_count` 与 `user_like_record`；落库成功则结束，失败则回滚 Redis（Lua 脚本撤销本次变更）。
+- **写流程（两种同步方式，由 MediaServiceImpl 内注释切换）**：  
+  - **方式一（当前默认）**：先 DB 再 Redis。事务落库 `user_like_record` 与 `media.like_count`，再按 DB 的 likeCount 回写 ZSET 与位图（`setScoreForMedia` + `setLiked`）。无 MQ，轻量。  
+  - **方式二（高并发）**：先 Redis（Lua 更新 ZSET + 位图）→ 发 MQ → 消费者事务落库；落库失败则回滚 Redis。
 
-### 点赞/取消点赞写流程（Redis → MQ → 落库，失败回滚 Redis）
+### 点赞/取消点赞写流程
+
+**方式一（先 DB 再 Redis，当前默认）**  
+1. 校验媒体存在且 state=0、用户已登录。  
+2. 若 Redis 位图已赞/未赞则直接 return（幂等）。  
+3. 调用 `MediaLikePersistService.persist` 事务落库（LIKE：插 user_like_record + like_count+1；UNLIKE：删记录 + like_count-1）。  
+4. `getById(mediaId)` 取最新 likeCount，再 `setLiked` + `setScoreForMedia` 回写 Redis。  
+使用 `MediaServiceImpl.likeSyncDbFirst` / `unlikeSyncDbFirst`；切换为方式二时在 like/unlike 中注释 DbFirst 调用、取消 ViaMq 调用即可。
+
+**方式二（先 Redis 再 MQ，高并发方案）**
 
 1. **用户点赞/取消点赞** → 接口层校验（媒体存在且 state=0、用户身份等）。
 2. **改 Redis（Lua 原子）**  
@@ -221,7 +231,7 @@
    - 审核通过（state 6→0）：若 DB 已有 like_count，需用该值对 `media:rank:all` 与 `media:rank:{category}` 执行 `ZADD`（Lua 脚本保证双 key 同时写入）。
 
 5. **与 media:core 的 likeCount**
-   - 列表/详情展示点赞数时，先读 Redis ZSET 中的 score，若不存在再用 `media:core`/DB 的 likeCount。
+   - media:core 不存 likeCount；列表/详情展示点赞数时，先读 Redis ZSET 的 score，未在榜时再用 DB 的 likeCount。
 
 ### 查询点赞记录（是否已赞）
 

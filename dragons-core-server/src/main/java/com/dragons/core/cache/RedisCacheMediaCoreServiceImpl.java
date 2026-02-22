@@ -56,19 +56,38 @@ public class RedisCacheMediaCoreServiceImpl implements RedisCacheMediaCoreServic
 
     /**
      * 将媒体核心数据写入缓存，TTL 为 600 秒（10 分钟）。
+     * 写入时去掉 likeCount/likeCountUpdateTime，点赞数统一由 ZSET 提供，避免冗余。
      */
     @Override
     public void putMediaCore(Long mediaId, Media media) {
         if (mediaId == null || media == null) {
             return;
         }
+        Media toCache = copyMediaWithoutLikeCount(media);
         String key = MEDIA_CORE_KEY_PREFIX + mediaId;
         try {
-            redisTemplate.opsForValue().set(key, media, MEDIA_CORE_TTL_SECONDS, TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set(key, toCache, MEDIA_CORE_TTL_SECONDS, TimeUnit.SECONDS);
             log.info("media core cache put mediaId={}", mediaId);
         } catch (Exception e) {
             log.error("media core cache put failed mediaId={} error={}", mediaId, e.getMessage());
         }
+    }
+
+    /** 复制 Media 并清空 likeCount/likeCountUpdateTime，用于写入 media:core 时避免冗余存储 */
+    private static Media copyMediaWithoutLikeCount(Media source) {
+        Media copy = new Media();
+        copy.setId(source.getId());
+        copy.setUploaderId(source.getUploaderId());
+        copy.setFileHash(source.getFileHash());
+        copy.setCategory(source.getCategory());
+        copy.setTitle(source.getTitle());
+        copy.setDescription(source.getDescription());
+        copy.setStoragePath(source.getStoragePath());
+        copy.setCoverPath(source.getCoverPath());
+        copy.setState(source.getState());
+        copy.setUpdateTime(source.getUpdateTime());
+        copy.setCoverUrl(source.getCoverUrl());
+        return copy;
     }
 
     /**

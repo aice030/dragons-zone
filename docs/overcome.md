@@ -179,6 +179,21 @@
 
 ---
 
+## MediaServiceImpl 与 MediaVisibleServiceImpl 循环依赖
+
+### 问题
+- 启动报错：`mediaServiceImpl` ↔ `mediaVisibleServiceImpl` 构造器循环引用，Spring 禁止。
+
+### 原因
+- `MediaServiceImpl` 构造函数注入 `IMediaVisibleService`；`MediaVisibleServiceImpl` 构造函数注入 `IMediaService`，形成环。
+
+### 解决方案
+- **MediaVisibleServiceImpl** 中对 `IMediaService` 的依赖仅用于两处 `getById(mediaId)`（查库写 media:core 缓存）。
+- 该类已注入 `MediaMapper`，将两处 `mediaService.getById(mediaId)` 改为 `mediaMapper.selectById(mediaId)`，并移除构造函数中的 `IMediaService` 参数。
+- 打破循环的同时保持职责清晰：列表/缓存逻辑只需按 ID 查 Media，用 Mapper 即可，无需经 Media 业务服务。
+
+---
+
 ## 联表查询流程（MyBatis 手写 SQL 方式）
 
 与 MyBatis-Plus 的 `LambdaQueryWrapper` 单表查询不同，联表需要多张表 JOIN，一般用 **Mapper 接口 + XML 手写 SQL**，不依赖 Wrapper。
@@ -410,6 +425,16 @@
 - **一次 Redis 取数**：使用 ZREVRANGE WITHSCORES 一次取 Top N 的 member 与 score；Spring 返回 `Set<TypedTuple<String>>`，转成 `List<RankEntry>` 后按 score 降序、mediaId 升序排序，保证顺序与 Redis 一致。
 - **ZSET 不存在**：不主动创建；直接返回空列表。ZSET 由点赞时的 ZINCRBY 在 key 不存在时自动创建，无需读时回源。
 - **媒体信息补全**：按 mediaId 列表先批量查 media:core；未命中的 id 再按 id 加分布式锁、双重检测后查 DB 并写回 media:core，最后按顺序组装 HotListItem（likeCount 取自 ZSET score）。
+
+### 详情展示点赞数（实时 likeCount）
+
+- **约定**（与 Redis_DESIGN.md 一致）：列表/详情展示点赞数时，**先读 Redis ZSET 的 score，不存在再用 media:core/DB 的 likeCount**。
+- **MediaDetailResult**：增加 `likeCount` 字段，供前端媒体详情页展示。
+- **取值逻辑**（`MediaServiceImpl.resolveLikeCount(mediaId, media)`）：
+  1. 调用 `RedisCacheMediaLikeService.getLikeCountFromRank(mediaId)`：对 `media:rank:all` 执行 **ZSCORE**，有值则返回该 score（即实时点赞数）。
+  2. 若 ZSET 无该 member（新媒体或从未被点赞），则用当前 **Media** 的 `likeCount`；再缺则视为 0。
+- **Media 来源**：当前这条 Media 来自 **media:core 缓存**还是 **数据库**，由 `getMediaDetail` 的「先查缓存、未命中再查 DB」逻辑决定；本逻辑不区分来源，只要在拼装 `MediaDetailResult` 时传入「当前用于详情的 Media」，即可在 ZSET 未命中时用其 `likeCount` 兜底。
+- **实现位置**：`getMediaDetail` 所有返回路径（缓存命中三处、持锁查 DB 一处、未持锁降级查 DB 一处）在得到 `MediaDetailResult` 后统一执行 `result.likeCount = resolveLikeCount(mediaId, media)`。
 
 ### 缓存恢复策略（Redis 宕机后）
 - Redis 宕机导致 ZSET 与 bitmap 丢失时，以 **user_like_record** 为数据源恢复缓存。

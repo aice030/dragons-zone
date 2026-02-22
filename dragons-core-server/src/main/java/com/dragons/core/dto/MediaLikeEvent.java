@@ -8,7 +8,8 @@ import lombok.Setter;
 import java.io.Serializable;
 
 /**
- * 点赞/取消点赞 MQ 事件，供生产者发送与消费者落库、回滚使用。
+ * 点赞/取消点赞 MQ 消息体：生产者序列化后发往 Topic，消费者反序列化后根据 operation/mediaId/userId/category 落库或回滚 Redis。
+ * 实现 Serializable 以便 RocketMQ 在网络上传输对象。
  *
  * @author aice
  * @since 2026-02-21

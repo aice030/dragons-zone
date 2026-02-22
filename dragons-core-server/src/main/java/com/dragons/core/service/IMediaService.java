@@ -223,6 +223,7 @@ public interface IMediaService extends IService<Media> {
         public String coverUrl;
         public Long uploaderId;
         public LocalDateTime updateTime;
+        public Long likeCount;
 
         public MediaDetailResult(){}
 
@@ -235,7 +236,8 @@ public interface IMediaService extends IService<Media> {
                                  @JsonProperty("coverPath") String coverPath,
                                  @JsonProperty("coverUrl") String coverUrl,
                                  @JsonProperty("uploaderId") Long uploaderId,
-                                 @JsonProperty("updateTime") LocalDateTime updateTime) {
+                                 @JsonProperty("updateTime") LocalDateTime updateTime,
+                                 @JsonProperty("likeCount") Long likeCount) {
             this.id = id;
             this.category = category;
             this.title = title;
@@ -245,6 +247,7 @@ public interface IMediaService extends IService<Media> {
             this.coverUrl = coverUrl;
             this.uploaderId = uploaderId;
             this.updateTime = updateTime;
+            this.likeCount = likeCount;
         }
     }
 }

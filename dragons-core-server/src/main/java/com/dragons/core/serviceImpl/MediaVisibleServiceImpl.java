@@ -9,7 +9,6 @@ import com.dragons.core.dao.MediaMapper;
 import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.IMediaVisibleService;
-import com.dragons.core.service.IMediaService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dragons.core.storage.StorageService;
 import com.dragons.core.cache.RedisCacheMediaCoreService;
@@ -43,20 +42,17 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
     private final RedisCacheMediaCoreService redisCacheMediaCoreService;
     private final RedisCacheMediaListService redisCacheMediaListService;
     private final RedisCacheMediaLikeService redisCacheMediaLikeService;
-    private final IMediaService mediaService;
 
     @Autowired
     public MediaVisibleServiceImpl(MediaMapper mediaMapper, StorageService storageService,
                                    RedisCacheMediaCoreService redisCacheMediaCoreService,
                                    RedisCacheMediaListService redisCacheMediaListService,
-                                   RedisCacheMediaLikeService redisCacheMediaLikeService,
-                                   IMediaService mediaService) {
+                                   RedisCacheMediaLikeService redisCacheMediaLikeService) {
         this.mediaMapper = mediaMapper;
         this.storageService = storageService;
         this.redisCacheMediaCoreService = redisCacheMediaCoreService;
         this.redisCacheMediaListService = redisCacheMediaListService;
         this.redisCacheMediaLikeService = redisCacheMediaLikeService;
-        this.mediaService = mediaService;
     }
 
     @Override
@@ -476,7 +472,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
      * @param cachedMediaMap 已缓存的媒体数据映射（用于存储加载到的数据）
      */
     private void queryAndWriteMediaCore(Long mediaId, Map<Long, Media> cachedMediaMap) {
-        Media media = mediaService.getById(mediaId);
+        Media media = mediaMapper.selectById(mediaId);
         if (media == null || media.getState() == null) {
             // 防止缓存穿透：写入空值缓存
             redisCacheMediaCoreService.putNullValue(mediaId);
@@ -556,7 +552,7 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                 } else {
                     // 获取锁失败，降级查询数据库（不写入缓存）
                     log.warn("listMedia failed to acquire lock for media core, falling back to direct DB query mediaId={}", mediaId);
-                    Media media = mediaService.getById(mediaId);
+                    Media media = mediaMapper.selectById(mediaId);
                     if (media != null && media.getState() != null && media.getState() == 0) {
                         cachedMediaMap.put(mediaId, media);
                     }

@@ -71,6 +71,28 @@ public interface RedisCacheMediaLikeService {
     void setLiked(Long mediaId, Long userId, boolean liked);
 
     /**
+     * 将指定媒体在排行榜 ZSET（all + category）中的 score 设为给定点赞数。
+     * 用于「先 DB 再 Redis」同步：落库后以 media.like_count 回写缓存。ZADD 语义：存在则更新，不存在则插入。
+     *
+     * @param mediaId  媒体ID
+     * @param category 媒体分类 0=图片，1=视频
+     * @param count    点赞数（通常来自 DB media.like_count）
+     */
+    void setScoreForMedia(Long mediaId, Byte category, long count);
+
+    /**
+     * 原子写回：位图（该用户已赞/未赞）+ 双 ZSET 的 score。
+     * 用于「先 DB 再 Redis」时保证位图与点赞数同时成功或同时不写（Lua 脚本）。
+     *
+     * @param mediaId  媒体ID
+     * @param userId   用户ID（位图 offset）
+     * @param category 媒体分类 0=图片，1=视频
+     * @param count    点赞数（ZSET score，通常来自 DB media.like_count）
+     * @param liked    true 已赞，false 未赞
+     */
+    void setLikedAndScoreForMedia(Long mediaId, Long userId, Byte category, long count, boolean liked);
+
+    /**
      * 媒体删除时清理点赞相关 Redis：从 3 个排行榜 ZSET 中 ZREM 该 mediaId，并 DEL 该媒体的已赞 bitmap。
      * 按 Redis_DESIGN.md 与 media 生命周期一致。
      *
@@ -101,6 +123,14 @@ public interface RedisCacheMediaLikeService {
      * @return 按点赞数降序的 (mediaId, likeCount) 列表，可能不足 limit 条
      */
     List<RankEntry> getRankMediaIdsWithScores(Byte category, int limit);
+
+    /**
+     * 按 mediaId 从排行榜 ZSET 取点赞数（用于详情/列表展示）。先读 ZSET，未在榜时再用 DB（media:core 不存 likeCount）。
+     *
+     * @param mediaId 媒体ID
+     * @return 有 score 时 Optional.of(likeCount)，未在榜时 Optional.empty()
+     */
+    Optional<Long> getLikeCountFromRank(Long mediaId);
 
     // ---------- 分布式锁（SET NX，防击穿：查询已赞状态缓存未命中时同一 media 仅一人查 DB 并写回） ----------
 
