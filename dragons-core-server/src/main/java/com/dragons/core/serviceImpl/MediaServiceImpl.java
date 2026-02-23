@@ -14,6 +14,7 @@ import com.dragons.core.cache.RedisCacheMediaLikeService;
 import com.dragons.core.service.IMediaService;
 import com.dragons.core.service.IMediaVisibleService;
 import com.dragons.core.service.MediaLikePersistService;
+import com.dragons.core.service.OssStsService;
 import com.dragons.core.service.IUserService;
 import com.dragons.core.mq.MediaLikeMqProducer;
 import com.dragons.core.storage.StorageService;
@@ -21,11 +22,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.FileCopyUtils;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.security.MessageDigest;
+import java.io.InputStream;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -62,12 +65,24 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final RedisCacheMediaLikeService redisCacheMediaLikeService;
     private final MediaLikePersistService mediaLikePersistService;
     private final MediaLikeMqProducer mediaLikeMqProducer;
+    private final OssStsService ossStsService;
 
     /**
      * 封面预签名URL有效期（秒）
      * 设置为12分钟（720秒），覆盖缓存TTL（10分钟）并额外2分钟应对网络波动
      */
     private static final int COVER_URL_TTL_SECONDS = 720;
+
+    /**
+     * 上传预签名URL有效期（秒）
+     * 设置为1小时，便于前端在短时间内完成直传
+     */
+    private static final int UPLOAD_URL_TTL_SECONDS = 3600;
+
+    /**
+     * 视频未传封面时的默认封面在 OSS 中的对象路径（与 classpath:images/default_cover.jpg 对应）
+     */
+    private static final String DEFAULT_COVER_OBJECT_NAME = "images/default_cover.jpg";
 
     // 延迟任务
     private final ScheduledExecutorService delayDeleteExecutor =
@@ -85,7 +100,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                             RedisCacheMediaListService redisCacheMediaListService,
                             RedisCacheMediaLikeService redisCacheMediaLikeService,
                             MediaLikePersistService mediaLikePersistService,
-                            MediaLikeMqProducer mediaLikeMqProducer) {
+                            MediaLikeMqProducer mediaLikeMqProducer,
+                            OssStsService ossStsService) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
         this.userService = userService;
@@ -94,60 +110,48 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         this.redisCacheMediaLikeService = redisCacheMediaLikeService;
         this.mediaLikePersistService = mediaLikePersistService;
         this.mediaLikeMqProducer = mediaLikeMqProducer;
+        this.ossStsService = ossStsService;
     }
 
     @Override
-    public UploadResult upload(MultipartFile file,
-                               Byte category,
-                               List<Long> visibleUserIds,
-                               Long uploaderUserId,
-                               String title,
-                               String description,
-                               MultipartFile cover) {
-        if (file == null || file.isEmpty()) {
-            throw new BusinessException(ResponseCode.BAD_REQUEST);
-        }
-        if (cover == null || cover.isEmpty()) {
-            throw new BusinessException(ResponseCode.BAD_REQUEST);
-        }
+    public UploadResult prepareUpload(String fileHash,
+                                      Byte category,
+                                      Long uploaderUserId,
+                                      String title,
+                                      String description,
+                                      String filename) {
         validateUploadParams(category, title, description, uploaderUserId);
-        // 1) 通过扩展名验证文件类型
-        validateFileExtension(file, category);
 
-        // 2) 读取文件内容到字节数组（用于计算哈希和上传，避免重复读取）
-        byte[] fileBytes;
-        try {
-            fileBytes = file.getBytes();
-        } catch (Exception e) {
-            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        if (fileHash == null || fileHash.trim().isEmpty()) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
-        // 3) 计算文件哈希值（用于幂等性检查）
-        String fileHash = calculateFileHash(fileBytes);
 
-        // 4) 幂等性检查：查询是否已存在相同文件（相同用户 + 相同哈希）
+        // 幂等性检查：查询是否已存在相同文件（相同用户 + 相同哈希）
         LambdaQueryWrapper<Media> hashWrapper = new LambdaQueryWrapper<>();
         hashWrapper.eq(Media::getFileHash, fileHash)
-                   .eq(Media::getUploaderId, uploaderUserId);
+                .eq(Media::getUploaderId, uploaderUserId);
         Media existingMedia = this.getOne(hashWrapper);
 
-        // 如果已存在相同文件，直接返回已有记录（幂等）
-        // 排除正在删除（state=4）和已删除（state=5）的记录
-        if (existingMedia != null && existingMedia.getState() != 4 && existingMedia.getState() != 5) {
-            log.info("upload: duplicate content, returning existing media userId={} mediaId={}", uploaderUserId, existingMedia.getId());
-            // 返回已有记录的ID和路径
+        // 如果已存在相同文件，直接返回已有记录（幂等，排除正在删除和已删除）
+        if (existingMedia != null && existingMedia.getState() != null
+                && existingMedia.getState() != 4 && existingMedia.getState() != 5) {
+            log.info("prepareUpload: duplicate content, returning existing media userId={} mediaId={}", uploaderUserId, existingMedia.getId());
+            String uploadUrl = storageService.getPresignedUploadUrl(existingMedia.getStoragePath(), UPLOAD_URL_TTL_SECONDS);
             return new UploadResult(
                     existingMedia.getId(),
                     existingMedia.getStoragePath(),
                     existingMedia.getCategory(),
-                    visibleUserIds 
+                    null,
+                    uploadUrl,
+                    UPLOAD_URL_TTL_SECONDS,
+                    ossStsService.getStsCredentials()
             );
         }
 
-        // 6) 生成对象存储路径
-        String objectName = buildObjectName(file.getOriginalFilename(), category);
-        String coverPath = resolveCoverPath(category, objectName, cover);
+        // 生成对象存储路径（无主文件，仅根据可选文件名或按分类默认扩展名）；不落库 coverPath
+        String objectName = buildObjectName(filename, category);
 
-        // 8) 保存 media（state=1，正在上传）
+        // 保存 media（state=1，正在上传），不写入 coverPath，不写 media_visible
         Media media = new Media();
         media.setUploaderId(uploaderUserId);
         media.setFileHash(fileHash);
@@ -155,7 +159,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         media.setTitle(title);
         media.setDescription(description);
         media.setStoragePath(objectName);
-        media.setCoverPath(coverPath);
+        media.setCoverPath(null);
         media.setState((byte) 1);
         media.setUpdateTime(LocalDateTime.now());
         media.setLikeCount(0L);
@@ -163,41 +167,157 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
         boolean saved = saveWithRetry(media);
         if (!saved) {
-            log.error("upload: media insert failed");
+            log.error("prepareUpload: media insert failed");
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
 
-        // 9) 上传媒体文件到对象存储（使用字节数组上传）
-        try {
-            uploadMainFileToStorage(fileBytes, file.getContentType(), objectName);
-        } catch (BusinessException e) {
+        // 为新建的对象生成上传用预签名 URL，供前端直传使用
+        String uploadUrl = storageService.getPresignedUploadUrl(objectName, UPLOAD_URL_TTL_SECONDS);
+
+        log.info("prepareUpload success mediaId={} category={} uploaderId={}", media.getId(), category, uploaderUserId);
+        return new UploadResult(media.getId(), objectName, category, null, uploadUrl, UPLOAD_URL_TTL_SECONDS, ossStsService.getStsCredentials());
+    }
+
+    @Override
+    public void uploadComplete(Long mediaId,
+                               boolean success,
+                               List<Long> visibleUserIds,
+                               Long currentUserId,
+                               MultipartFile cover) {
+        if (mediaId == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+        if (currentUserId == null) {
+            throw new BusinessException(ResponseCode.UNAUTHORIZED);
+        }
+        if (visibleUserIds == null) {
+            throw new BusinessException(ResponseCode.BAD_REQUEST);
+        }
+
+        Media media = this.getById(mediaId);
+        if (media == null || media.getState() == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+        if (media.getUploaderId() == null || !media.getUploaderId().equals(currentUserId)) {
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+
+        // 幂等：如果当前 state 不是 1（正在上传），视为已处理，直接返回成功
+        if (media.getState() != 1) {
+            log.info("uploadComplete: media already processed, mediaId={} state={}", mediaId, media.getState());
+            return;
+        }
+
+        // 获取media元数据，用于后续验证
+        String storagePath = media.getStoragePath();
+        Byte category = media.getCategory();
+        Long uploaderUserId = media.getUploaderId();
+
+        if (!success) {
+            // 前端传回失败时先看 OSS 是否已有内容：有则视为上传成功，继续后续流程；没有再按失败处理
+            boolean ossHasContent = storagePath != null && !storagePath.trim().isEmpty() && storageService.exists(storagePath);
+            if (ossHasContent) {
+                log.info("uploadComplete: frontend reported failure but OSS has object, treating as success mediaId={} path={}", mediaId, storagePath);
+                // 不 return，继续执行下方成功流程
+            } else {
+                // OSS 查不到内容，按上传失败处理
+                media.setState((byte) 3);
+                media.setUpdateTime(LocalDateTime.now());
+                if (!updateWithRetry(media)) {
+                    log.error("uploadComplete: mark failed state=3 update failed mediaId={}", mediaId);
+                    throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+                }
+                if (storagePath != null && !storagePath.trim().isEmpty()) {
+                    try {
+                        storageService.delete(storagePath);
+                    } catch (Exception e) {
+                        log.warn("uploadComplete: delete storage object failed mediaId={} path={}", mediaId, storagePath, e);
+                    }
+                }
+                log.info("uploadComplete: marked upload failed mediaId={} userId={}", mediaId, currentUserId);
+                return;
+            }
+        }
+
+        // success = true（或前端报失败但 OSS 有内容）：先校验主文件对象是否真实存在
+        if (storagePath == null || storagePath.trim().isEmpty()) {
+            log.warn("uploadComplete: storagePath is blank, mark failed mediaId={}", mediaId);
             media.setState((byte) 3);
             media.setUpdateTime(LocalDateTime.now());
             updateWithRetry(media);
-            throw e;
-        }
-
-        // 10) 上传成功，更新 state=2（上传成功）
-        media.setState((byte) 2);
-        media.setUpdateTime(LocalDateTime.now());
-        // 重试3次
-        boolean updated = updateStateWithRetry(media, 3);
-        if (!updated) {
-            log.error("upload state update failed, rolling back mediaId={} objectName={}", media.getId(), objectName);
-            try {
-                storageService.delete(objectName);
-            } catch (Exception e) {
-                log.warn("rollback storage delete failed mediaId={} objectName={}", media.getId(), objectName, e);
-            }
-            try {
-                this.removeById(media.getId());
-            } catch (Exception e) {
-                log.warn("rollback media remove failed mediaId={}", media.getId(), e);
-            }
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
 
-        // 11) 保存 media_visible
+        if (!storageService.exists(storagePath)) {
+            log.warn("uploadComplete: storage object not found, mark failed mediaId={} path={}", mediaId, storagePath);
+            media.setState((byte) 3);
+            media.setUpdateTime(LocalDateTime.now());
+            updateWithRetry(media);
+            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        }
+
+        // 封面可选：图片(category=0)未传封面时用主文件作封面；视频(category=1)未传封面时从 OSS 视频截取第一帧
+        String coverPath;
+        byte[] coverBytes = null;
+        String coverContentType = null;
+        if (category == 0) {
+            // 图片：未传封面则主文件即封面
+            if (cover == null || cover.isEmpty()) {
+                coverPath = storagePath;
+            } else {
+                validateCoverExtension(cover);
+                coverPath = storagePath;
+                // 图片主文件即封面，无需再上传单独封面文件
+            }
+        } else {
+            // 视频：未传封面则用默认封面兜底（OSS 已有则直接用，否则从 classpath 上传）；传了则用用户上传的封面
+            if (cover == null || cover.isEmpty()) {
+                coverPath = resolveDefaultCoverPath();
+            } else {
+                validateCoverExtension(cover);
+                coverPath = buildCoverObjectName(cover.getOriginalFilename());
+                try {
+                    coverBytes = cover.getBytes();
+                } catch (Exception e) {
+                    throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+                }
+                coverContentType = cover.getContentType();
+            }
+        }
+
+        // 若图片传了封面且与主文件不同（当前设计下图片 coverPath=storagePath，不单独上传），此处不重复上传
+        boolean needUploadCover = (category == 1 && coverBytes != null);
+
+        // 对象存在，更新 state=2（上传成功）
+        media.setState((byte) 2);
+        media.setUpdateTime(LocalDateTime.now());
+        boolean updated = updateStateWithRetry(media, 3);
+        if (!updated) {
+            log.error("uploadComplete: state update to 2 failed mediaId={}", mediaId);
+            throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+        }
+
+        // 落库 coverPath（可为 null，如视频未传封面时）
+        if (coverPath != null) {
+            media.setCoverPath(coverPath);
+            media.setUpdateTime(LocalDateTime.now());
+            if (!updateWithRetry(media)) {
+                log.error("uploadComplete: update coverPath failed mediaId={}", mediaId);
+                throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+            }
+        }
+
+        // 如果上传的是视频，且未上传封面，需单独上传封面到 OSS（用户上传的封面或截取的第一帧）
+        if (needUploadCover && coverBytes != null && coverContentType != null) {
+            try {
+                storageService.upload(coverBytes, coverContentType, coverPath);
+            } catch (Exception e) {
+                log.warn("uploadComplete: cover upload to OSS failed mediaId={} coverPath={}", mediaId, coverPath, e);
+                // 封面上传失败不阻断主流程，与现有约定一致
+            }
+        }
+
+        // 保存 media_visible
         boolean visibleSaved = saveMediaVisibleWithRetry(media.getId(), uploaderUserId, visibleUserIds);
         if (visibleSaved) {
             // 保存成功，更新 state=6（待审核）
@@ -205,38 +325,10 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             media.setUpdateTime(LocalDateTime.now());
             updateWithRetry(media);
         } else {
-            log.warn("media_visible save failed mediaId={}, state remains 2", media.getId());
+            log.warn("uploadComplete: media_visible save failed mediaId={}, state remains 2", media.getId());
         }
 
-        // 12) 上传封面文件到对象存储（如果用户提供了封面）
-        uploadCoverToStorageIfPresent(cover, coverPath);
-
-        // 13) 写时删除：仅删 media:my（上传前不存在 media:core，上传后 state=6 不影响 media:list）
-        if (uploaderUserId != null) {
-            try {
-                evictMyUploadListForDelete(media.getId(), uploaderUserId, null, true);
-                if (category != null) {
-                    evictMyUploadListForDelete(media.getId(), uploaderUserId, category, true);
-                }
-            } catch (Exception e) {
-                log.warn("upload evict media:my cache failed uploaderId={} category={} error={}", uploaderUserId, category, e.getMessage());
-            }
-            // 延迟双删：500ms 后再删一次缓存
-            delayDeleteExecutor.schedule(() -> {
-                try {
-                    evictMyUploadListForDelete(media.getId(), uploaderUserId, null, false);
-                    if (category != null) {
-                        evictMyUploadListForDelete(media.getId(), uploaderUserId, category, false);
-                    }
-                    log.info("upload delay double delete media:my cache success mediaId={}", media.getId());
-                } catch (Exception e) {
-                    log.warn("upload delay double delete media:my cache failed mediaId={}", media.getId(), e);
-                }
-            }, 500, TimeUnit.MILLISECONDS);
-        }
-
-        log.info("upload success mediaId={} category={} uploaderId={}", media.getId(), category, uploaderUserId);
-        return new UploadResult(media.getId(), objectName, category, visibleUserIds);
+        log.info("uploadComplete success mediaId={} category={} uploaderId={}", media.getId(), category, currentUserId);
     }
 
     @Override
@@ -498,7 +590,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 // 验证media_state，防止未公开的media被错误的访问到
                 // 访问规则：
                 // - 游客/非上传者：仅允许查看 state=0（已审核通过）
-                // - 上传者本人：允许查看 state=0/6/7（便于查看违规原因并做修改）
+                // - 上传者本人：允许查看 state=0/2/6/7（2=上传成功；6/7=待审核/驳回便于查看原因；state=1 上传中不可见）
+                // - 审核者：允许查看 state=6/7（审核流程中的预览）
                 byte state = media.getState();
                 if (state != 0) {
                     boolean isOwner = currentUserId != null
@@ -514,7 +607,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                             // 非审核者：按“资源不存在”处理，避免泄露待审核资源
                         }
                     }
-                    if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
+                    if (!((isOwner && (state == 2 || state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
                         log.warn("getMediaDetail denied because media has not got approved mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
                         // 防止缓存穿透：对于无权限访问的数据，也写入空值缓存
                         redisCacheMediaCoreService.putNullValue(mediaId);
@@ -542,7 +635,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                     throw new BusinessException(ResponseCode.NOT_FOUND);
                 }
                 
-                // 访问规则校验
+                // 访问规则校验（与上方持锁分支一致：上传者可看 2/6/7，state=1 不可见；审核者可看 6/7）
                 byte state = media.getState();
                 if (state != 0) {
                     boolean isOwner = currentUserId != null
@@ -556,7 +649,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                         } catch (BusinessException ignored) {
                         }
                     }
-                    if (!((isOwner && (state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
+                    if (!((isOwner && (state == 2 || state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
                         throw new BusinessException(ResponseCode.NOT_FOUND);
                     }
                 }
@@ -667,7 +760,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             }
         }
         log.info("media update success mediaId={}", mediaId);
-        return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), null);
+        return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), null, null, null, null);
     }
 
     @Override
@@ -871,7 +964,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
 
         log.info("media visible rebuild success mediaId={}", mediaId);
-        return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds);
+        return new UploadResult(media.getId(), media.getStoragePath(), media.getCategory(), visibleUserIds, null, null, null);
     }
 
     /**
@@ -1085,37 +1178,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         return true;
     }
 
-    private void validateFileExtension(MultipartFile file, Byte category) {
-        String name = file.getOriginalFilename();
-        if (name == null) {
-            throw new BusinessException(ResponseCode.FILE_FORMAT_NOT_SUPPORTED);
-        }
-        String lower = name.toLowerCase(Locale.ROOT);
-
-        if (category == 0) {
-            // 图片常见格式
-            if (!(lower.endsWith(".jpg")
-                    || lower.endsWith(".jpeg")
-                    || lower.endsWith(".png")
-                    || lower.endsWith(".gif")
-                    || lower.endsWith(".webp")
-                    || lower.endsWith(".bmp"))) {
-                throw new BusinessException(ResponseCode.FILE_FORMAT_NOT_SUPPORTED);
-            }
-            return;
-        }
-
-        // category == 1：视频常见格式
-        if (!(lower.endsWith(".mp4")
-                || lower.endsWith(".mov")
-                || lower.endsWith(".avi")
-                || lower.endsWith(".mkv")
-                || lower.endsWith(".flv")
-                || lower.endsWith(".wmv"))) {
-            throw new BusinessException(ResponseCode.FILE_FORMAT_NOT_SUPPORTED);
-        }
-    }
-
     /**
      * 验证封面文件格式（必须是图片格式）
      *
@@ -1136,30 +1198,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 || lower.endsWith(".webp")
                 || lower.endsWith(".bmp"))) {
             throw new BusinessException(ResponseCode.FILE_FORMAT_NOT_SUPPORTED);
-        }
-    }
-
-    /**
-     * 计算文件内容的MD5哈希值（用于幂等性检查）
-     *
-     * @param fileBytes 文件字节数组
-     * @return MD5哈希值（32位16进制字符串）
-     */
-    private String calculateFileHash(byte[] fileBytes) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            md.update(fileBytes);
-            byte[] hashBytes = md.digest();
-            
-            // 转换为16进制字符串
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hashBytes) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            // 哈希计算失败，抛出异常
-            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
     }
 
@@ -1204,39 +1242,40 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
-     * 上传/更新共用：根据分类确定封面路径（上传时 cover 已校验必填，此处不再判空）
+     * 视频未传封面时的兜底：若 OSS 已有默认封面则直接返回路径，否则从 classpath 读取并上传后返回路径。
+     * 资源文件需放在 src/main/resources/images/default_cover.jpg
+     *
+     * @return 默认封面在 OSS 中的对象路径，失败时返回 null
      */
-    private String resolveCoverPath(Byte category, String objectName, MultipartFile cover) {
-        if (category == 0) {
-            return objectName;
+    private String resolveDefaultCoverPath() {
+        if (storageService.exists(DEFAULT_COVER_OBJECT_NAME)) {
+            return DEFAULT_COVER_OBJECT_NAME;
         }
-        return buildCoverObjectName(cover.getOriginalFilename());
+        byte[] bytes = loadDefaultCoverBytes();
+        if (bytes == null || bytes.length == 0) {
+            log.warn("resolveDefaultCoverPath: default cover resource not found or empty");
+            return null;
+        }
+        try {
+            storageService.upload(bytes, "image/jpeg", DEFAULT_COVER_OBJECT_NAME);
+            log.info("resolveDefaultCoverPath: uploaded default cover to OSS path={}", DEFAULT_COVER_OBJECT_NAME);
+            return DEFAULT_COVER_OBJECT_NAME;
+        } catch (Exception e) {
+            log.warn("resolveDefaultCoverPath: upload default cover failed path={}", DEFAULT_COVER_OBJECT_NAME, e);
+            return null;
+        }
     }
 
     /**
-     * 上传/更新共用：主文件上传到对象存储，失败抛 FILE_UPLOAD_FAILED
+     * 从 classpath 读取默认封面图片（images/default_cover.jpg）
      */
-    private void uploadMainFileToStorage(byte[] fileBytes, String contentType, String objectName) {
+    private byte[] loadDefaultCoverBytes() {
         try {
-            storageService.upload(fileBytes, contentType, objectName);
+            InputStream is = new ClassPathResource("images/default_cover.jpg").getInputStream();
+            return FileCopyUtils.copyToByteArray(is);
         } catch (Exception e) {
-            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
-        }
-    }
-
-    /**
-     * 上传/更新共用：若有封面则校验并上传，失败不抛异常（不影响主流程）
-     */
-    private void uploadCoverToStorageIfPresent(MultipartFile cover, String coverPath) {
-        if (cover == null || cover.isEmpty()) {
-            return;
-        }
-        try {
-            validateCoverExtension(cover);
-            byte[] coverBytes = cover.getBytes();
-            storageService.upload(coverBytes, cover.getContentType(), coverPath);
-        } catch (Exception e) {
-            // 封面上传失败不抛，与现有行为一致
+            log.warn("loadDefaultCoverBytes: read failed", e);
+            return null;
         }
     }
 
@@ -1301,12 +1340,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 }
             }
         }
-        if (uploaderId != null) {
-            evictMyUploadListForDelete(mediaId, uploaderId, null, perCallTryCatch);
-            if (category != null) {
-                evictMyUploadListForDelete(mediaId, uploaderId, category, perCallTryCatch);
-            }
-        }
         if (perCallTryCatch) {
             try { evictLike.run(); } catch (Exception e) { log.warn("delete: evictMediaLikeData failed mediaId={} error={}", mediaId, e.getMessage()); }
         } else {
@@ -1330,22 +1363,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         }
     }
 
-    private void evictMyUploadListForDelete(Long mediaId, Long uploaderId, Byte category, boolean perCallTryCatch) {
-        Runnable r = () -> redisCacheMediaListService.evictMyUploadList(uploaderId, category);
-        if (perCallTryCatch) {
-            try {
-                r.run();
-            } catch (Exception e) {
-                log.warn("delete: evictMyUploadList{} failed mediaId={} error={}", category == null ? "(all)" : "", mediaId, e.getMessage());
-            }
-        } else {
-            r.run();
-        }
-    }
-
     /**
-     * 驳回时使用的缓存清理：media:core + media:my。
-     * 不删 media:list（被驳回媒体从未出现在公共区/专区列表）。
+     * 驳回时使用的缓存清理：media:core。
+     * 不删 media:list（被驳回媒体从未出现在公共区/专区列表）；不删 media:my（已移除 myUploadList 缓存）。
      * 供 rejectMedia 第一次删除与延迟双删共用。
      */
     private void evictMediaCacheForReject(Long mediaId, Long uploaderId, Byte category, boolean perCallTryCatch) {
@@ -1354,12 +1374,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             try { evictCore.run(); } catch (Exception e) { log.warn("reject: evictMediaCore failed mediaId={} error={}", mediaId, e.getMessage()); }
         } else {
             evictCore.run();
-        }
-        if (uploaderId != null) {
-            evictMyUploadListForDelete(mediaId, uploaderId, null, perCallTryCatch);
-            if (category != null) {
-                evictMyUploadListForDelete(mediaId, uploaderId, category, perCallTryCatch);
-            }
         }
     }
 
@@ -1548,7 +1562,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             if (!this.updateById(media)) {
                 failedItems.add(new MediaAuditResult.FailedItem(media.getId(), media.getTitle()));
             } else {
-                // 审核驳回会改变 state（6→7），删除 media:core 和 media:my（不删 media:list，被驳回媒体从未出现在公共区/专区列表）
+                // 审核驳回会改变 state（6→7），删除 media:core（不删 media:list；media:my 已移除未启用）
                 try {
                     evictMediaCacheForReject(media.getId(), media.getUploaderId(), media.getCategory(), true);
                 } catch (Exception e) {

@@ -54,5 +54,14 @@ public interface StorageService {
      * @return 预签名URL
      */
     String getPresignedUrl(String objectName, int expirySeconds);
+
+    /**
+     * 生成用于上传的预签名URL（通常为 HTTP PUT）
+     *
+     * @param objectName 对象路径
+     * @param expirySeconds 过期时间（秒）
+     * @return 预签名上传URL
+     */
+    String getPresignedUploadUrl(String objectName, int expirySeconds);
 }
 

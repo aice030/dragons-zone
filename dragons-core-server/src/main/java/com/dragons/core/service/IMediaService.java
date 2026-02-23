@@ -3,6 +3,7 @@ package com.dragons.core.service;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.dragons.core.dto.MediaAuditResult;
+import com.dragons.core.dto.OssStsCredentials;
 import com.dragons.core.entity.Media;
 import com.baomidou.mybatisplus.extension.service.IService;
 import org.springframework.web.multipart.MultipartFile;
@@ -21,23 +22,46 @@ import java.util.List;
 public interface IMediaService extends IService<Media> {
 
     /**
-     * 上传媒体资源（图片/视频）
+     * 准备上传媒体资源（两阶段上传的第 1 步）
      *
-     * @param file 文件
+     * 说明：
+     * - 不接收主文件与封面，仅接收前端计算的 fileHash、基础信息等；
+     * - 负责参数校验、基于 fileHash 的幂等校验、落库 Media（state=1）并生成主文件存储路径（不落库 coverPath，不写 media_visible）；
+     * - 返回 mediaId、storagePath 以及用于前端直传对象存储的上传 URL（例如预签名 PUT URL），供前端直传对象存储使用。
+     *
+     * @param fileHash 前端计算的文件 hash（用于幂等校验）
      * @param category 0=图片；1=视频
-     * @param visibleUserIds 成员专区ID列表（必填，但可以为空数组[]）
      * @param uploaderUserId 上传者用户ID（从JWT获取）
      * @param title 标题（可选，最多32个字符）
      * @param description 描述（可选，最多128个字符）
-     * @param cover 封面图片（可选，如果提供则使用用户上传的封面，否则按默认规则处理）
-     * @return 上传结果
+     * @param filename 可选的原始文件名（用于推断扩展名；为空时按 category 使用默认扩展名）
+     * @return 上传结果（至少包含 mediaId、storagePath、uploadUrl 等）
      */
-    UploadResult upload(MultipartFile file,
-                        Byte category,
+    UploadResult prepareUpload(String fileHash,
+                               Byte category,
+                               Long uploaderUserId,
+                               String title,
+                               String description,
+                               String filename);
+
+    /**
+     * 通知上传结果（两阶段上传的第 2 步）
+     *
+     * 说明：
+     * - 前端完成直传 OSS 后调用；
+     * - success=true 时先校验对象是否存在，再写 state、media_visible；校验 cover 文件类型后计算 coverPath、落库并上传封面到 OSS；
+     * - success=false 时将 state 置为 3，必要时清理对象存储；cover 可不传。
+     *
+     * @param mediaId 媒体主键ID（准备上传阶段返回）
+     * @param success true=上传成功，false=上传失败
+     * @param visibleUserIds 成员专区ID列表（必填，但可以为空数组[]）
+     * @param currentUserId 当前登录用户ID（从JWT获取）
+     * @param cover 封面图片文件；success=true 时必传，后端校验类型后计算 coverPath、落库并上传到 OSS；success=false 时可 null
+     */
+    void uploadComplete(Long mediaId,
+                        boolean success,
                         List<Long> visibleUserIds,
-                        Long uploaderUserId,
-                        String title,
-                        String description,
+                        Long currentUserId,
                         MultipartFile cover);
 
     /**
@@ -174,12 +198,33 @@ public interface IMediaService extends IService<Media> {
         public String storagePath;
         public Byte category;
         public List<Long> visibleUserIds;
+        /**
+         * 前端直传对象存储使用的上传 URL（例如预签名 PUT URL）
+         */
+        public String uploadUrl;
+        /**
+         * 上传 URL 的有效期（秒），便于前端在过期后做重试或重新准备上传
+         */
+        public Integer uploadUrlExpireSeconds;
+        /**
+         * STS 临时凭证（准备上传时若配置了 STS 则返回，供前端 OSS SDK 分片上传等使用）
+         */
+        public OssStsCredentials stsCredentials;
 
-        public UploadResult(Long mediaId, String storagePath, Byte category, List<Long> visibleUserIds) {
+        public UploadResult(Long mediaId,
+                            String storagePath,
+                            Byte category,
+                            List<Long> visibleUserIds,
+                            String uploadUrl,
+                            Integer uploadUrlExpireSeconds,
+                            OssStsCredentials stsCredentials) {
             this.mediaId = mediaId;
             this.storagePath = storagePath;
             this.category = category;
             this.visibleUserIds = visibleUserIds;
+            this.uploadUrl = uploadUrl;
+            this.uploadUrlExpireSeconds = uploadUrlExpireSeconds;
+            this.stsCredentials = stsCredentials;
         }
     }
 

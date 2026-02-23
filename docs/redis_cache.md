@@ -94,11 +94,12 @@
   - `category`：`all`=全部，`0`=图片，`1`=视频（null 映射为 `all`）
   - 示例：`media:list:0:all:1:20`（公共区全部类型第1页）、`media:list:0:0:1:20`（公共区图片第1页）
 
-**用户管理media列表**
+**用户管理media列表（暂未启用）**
 - **Redis Key格式**：`media:my:{uploaderId}:{category}:{page}:{size}`
   - `uploaderId`：上传者用户ID
   - `category`：`all`=全部，`0`=图片，`1`=视频（null 映射为 `all`）
   - 示例：`media:my:1:all:1:20`（用户1的全部类型第1页）、`media:my:1:0:1:20`（用户1的图片第1页）
+  - **说明**：当前业务未使用该列表缓存，listMyUpload 直接查 DB 再按 id 从 media:core 或 DB 取数；Redis 中相关方法保留实现，便于后续启用。
 
 #### 缓存Value
 包含列表总数和媒体ID列表的结构，序列化为JSON对象：
@@ -124,14 +125,13 @@
 - 未命中则查 DB，仅 `state=0` 的媒体写入ID列表缓存
 - 批量获取 `media:core` 时，未命中的ID从DB加载并写入缓存
 
-**用户管理media列表（listMyUpload）**
-- 先查 Redis ID列表 → 命中则批量从 `media:core` 获取数据，填充 `MyUploadListItem` 返回
-- 未命中则查 DB，排除 `state=5` 的媒体写入ID列表缓存
-- 批量获取 `media:core` 时，未命中的ID从DB加载并写入缓存
+**用户管理media列表（listMyUpload，暂未启用）**
+- **当前实现**：直接查 DB 获取本页 (total, records)，再根据 id 批量从 `media:core` 取数，未命中则使用 DB 结果；不读写 `media:my` 列表缓存。
+- **若启用 media:my 时**：先查 Redis ID列表 → 命中则批量从 `media:core` 获取数据，填充 `MyUploadListItem` 返回；未命中则查 DB，排除 `state=5` 的媒体写入ID列表缓存；批量获取 `media:core` 时，未命中的ID从DB加载并写入缓存。
 
 **缓存失效**
-- 上传：删除对应 `zoneUserId` 和 `category` 的列表缓存
-- 更新/删除/审核：删除相关列表缓存（根据媒体所属专区）
+- **media:list**：上传/更新/删除/审核时，删除对应 `zoneUserId` 和 `category` 的列表缓存。
+- **media:my**：暂未启用，无失效逻辑。
 
 ### 缓存击穿/穿透的预防&解决方案
 
@@ -154,7 +154,7 @@
 **实现位置**：
 - getMediaDetail()方法，获取媒体详情
 - listMedia()方法，获取媒体展示列表，获取列表中id对应的media:core
-- listMyUpload()方法，获取用户上传列表列表，获取列表中id对应的media:core
+- listMyUpload()方法：用户上传列表缓存（media:my）暂未启用，当前无列表缓存击穿；若启用后需在此处对「列表未命中」加锁，获取列表中id对应的media:core 时与 listMedia 一致
 
 #### 缓存穿透防护
 

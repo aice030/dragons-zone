@@ -42,3 +42,10 @@ oss:
   access-key-id: 你的阿里云 RAM AccessKeyId
   access-key-secret: 你的阿里云 RAM AccessKeySecret
   bucket: 你的 OSS Bucket 名称（如 dragons-media）
+  # STS 临时凭证（可选，供前端 OSS SDK 分片上传等）
+  # 配置后 GET /api/media/upload/sts 返回临时凭证；需在 RAM 控制台创建角色并授予 oss:PutObject，且当前 AK 有 sts:AssumeRole 权限
+  sts:
+    region: cn-beijing
+    role-arn: acs:ram::你的账号ID:role/你的角色名
+    role-session-name: dragons-frontend-upload
+    duration-seconds: 3600

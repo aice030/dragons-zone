@@ -616,11 +616,15 @@ Authorization: Bearer <JWT_TOKEN>
 
 ---
 
-## 1. 上传媒体资源接口
+## 1. 上传媒体资源（两阶段：准备 → 前端直传 OSS → 通知结果）
+
+上传流程为：前端先调「准备上传」接口（带 `file_hash`），后端落库并返回 OSS 存储路径**以及前端直传 OSS 所需的上传 URL / 凭证**；前端使用该上传 URL（或基于返回的凭证初始化 OSS SDK）直传文件到 OSS；上传完成后前端调「通知上传结果」接口，后端校验 OSS 后执行后续逻辑。详见 `docs/upload_in_blocks.md`。
+
+### 1.1 准备上传接口
 
 ### POST /api/media/upload
 
-**功能说明**：上传图片或视频文件到对象存储（MinIO），并保存媒体记录和可见权限
+**功能说明**：参数校验、幂等校验（基于前端传来的 `file_hash`）、落库 Media（state=1）、生成 OSS 存储路径；返回 mediaId、storagePath，以及用于前端直传 OSS 的上传 URL / 凭证（如预签名 PUT URL）。**不接收主文件**，主文件由前端直传 OSS。
 
 **请求头**：
 ```
@@ -631,87 +635,109 @@ Content-Type: multipart/form-data
 **请求参数**（multipart/form-data）：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| file | MultipartFile | 是 | 文件（图片或视频） |
+| file_hash | String | 是 | 前端计算的文件 hash，用于后端幂等校验和media数据落库；后端不计算 |
 | category | Byte | 是 | 0=图片，1=视频 |
-| visibleUserIds | String | 是 | JSON数组字符串，例如 `[1,2,3]` 或 `[]`（必填，但可以为空数组，表示要展示到哪些成员专区） |
 | title | String | 否 | 标题（可选） |
 | description | String | 否 | 描述（可选） |
-| cover | MultipartFile | 是 | 封面图片（必填） |
+| filename | String | 否 | 原始文件名（用于生成存储路径扩展名；缺省时按 category 用 .jpg/.mp4） |
 
-**支持的图片格式**：jpg, jpeg, png, gif, webp, bmp
-
-**支持的视频格式**：mp4, mov, avi, mkv, flv, wmv
+**说明**：不传主文件（file）、不传封面（cover）；前端在收到本接口响应后，使用返回的 `storagePath` 与上传 URL / 凭证直传文件到 OSS（例如对预签名 PUT URL 直接发起 PUT 请求，或基于返回的配置初始化 OSS Browser SDK）；封面与可见范围（visibleUserIds）均在「通知上传结果」时提交。
 
 **成功响应**（200）：
 ```json
 {
   "code": 200,
-  "message": "上传成功",
+  "message": "可以开始上传",
   "data": {
     "mediaId": 1,
     "storagePath": "images/2026/01/21/abc123-test.jpg",
-    "category": 0,
-    "visibleUserIds": [1, 2, 3]
+    "uploadUrl": "https://dragons-media.oss-cn-beijing.aliyuncs.com/images/2026/01/21/abc123-test.jpg?Expires=...&OSSAccessKeyId=...&Signature=...",
+    "uploadUrlExpireSeconds": 3600,
+    "stsCredentials": {
+      "accessKeyId": "...",
+      "accessKeySecret": "...",
+      "securityToken": "...",
+      "expiration": 1771866228,
+      "region": "oss-cn-beijing",
+      "bucket": "dragons-media"
+    }
   },
   "timestamp": 1705564800000
 }
 ```
 
+| 字段 | 说明 |
+|------|------|
+| mediaId | 已落库的 Media 主键，通知上传结果时必带 |
+| storagePath | OSS 中的存储路径（对象 key），前端直传时使用该路径（小文件 PUT 用 uploadUrl，大文件分片用 OSS SDK + stsCredentials） |
+| uploadUrl | 用于前端直传的预签名 PUT URL（小文件可直接对该地址发起 PUT，body 为文件内容） |
+| uploadUrlExpireSeconds | `uploadUrl` 的有效期（秒） |
+| stsCredentials | 可选。STS 临时凭证（后端配置了 oss.sts 时返回），供前端使用 OSS SDK 做分片上传等；含 accessKeyId、accessKeySecret、securityToken、expiration、region、bucket |
+
 **失败响应**：
-- 未授权（401）：
-```json
-{
-  "code": 401,
-  "message": "未授权，请先登录",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 请求参数错误（400）：
-```json
-{
-  "code": 400,
-  "message": "请求参数错误",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 文件格式不支持（4005）：
-```json
-{
-  "code": 4005,
-  "message": "文件格式不支持",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 文件上传失败（4004）：
-```json
-{
-  "code": 4004,
-  "message": "文件上传失败",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
+- 未授权（401）：同上
+- 请求参数错误（400）：同上
+- 文件格式不支持（4005）：根据 category 与扩展名（可由前端在其它字段传递或由业务约定）校验
+- 幂等命中：若 `file_hash` 已存在且对应 media 已存在，可按业务约定返回 200 并返回该 media 信息，或返回 4xx
 
 **业务逻辑**：
-1. 验证JWT Token并获取当前用户ID
-2. 校验 cover 必填：若 cover 为空或未传，返回 400（请求参数错误）
-3. 验证文件格式（根据category检查扩展名）
-4. 生成对象存储路径（格式：`{category}/yyyy/MM/dd/{uuid}-{filename}`）
-5. 先保存 media 记录（state=1 正在上传），再上传主文件到 MinIO
-6. MinIO 上传成功后，将 media 的 state 更新为 2（上传成功）并写库；**仅当这一步写库失败时**：删除已上传的 MinIO 对象、删除该 media 记录，并返回上传失败
-7. 保存 media_visible 记录（用于“成员专区筛选”，不是权限系统）：
-   - **不再写入公共区 `user_id=0`**：公共区展示直接查询 `media` 表（永远全部公开）
-   - 遍历 visibleUserIds：写入成员专区ID列表
-   - 若 media_visible 保存成功，将 media 的 state 更新为 6（待审核）并写库；若 media_visible 写库失败，不删 MinIO，media 保持 state=2，可后续通过「可见范围修复」接口重试
-8. 上传封面到 MinIO（cover 已校验必填）
+1. 验证 JWT 并获取当前用户ID
+2. 参数校验：校验 category 等请求参数（不涉及封面，封面在「通知上传结果」阶段提交）
+3. **幂等校验**：根据前端传来的 `file_hash` 判断是否已存在同 hash 的 media（按现有幂等规则），若已存在则按约定返回
+4. 生成 OSS 存储路径（格式与现有一致，如 `{category}/yyyy/MM/dd/{uuid}-{filename}`，filename 可由前端传或由扩展名约定）
+5. 落库 Media（state=1 正在上传），仅写入 storagePath、fileHash、category、title、description 等，**不写入 coverPath**
+6. 调用对象存储服务生成上传用预签名 URL（HTTP PUT），得到 `uploadUrl`，并约定有效期 `uploadUrlExpireSeconds`
+7. 若配置了 STS（oss.sts.role-arn），调用 STS 获取临时凭证，放入响应 `stsCredentials`；未配置则不返回该字段或为 null
+8. 返回 mediaId、storagePath、uploadUrl、uploadUrlExpireSeconds、stsCredentials（可选）等，**不接收、不上传主文件，也不接收、不上传封面**
 
-**注意**：上传完成后，媒体状态为 `state=6`（待审核），需要管理员或作者审核通过后才能公开显示（`state=0`）。
+---
+
+### 1.2 通知上传结果接口
+
+### POST /api/media/upload/complete
+
+**功能说明**：前端在直传 OSS 成功或失败后调用此接口；后端先校验 OSS 上该对象是否真实存在（成功时），再按成功/失败执行后续逻辑。**success=true 时**需上传封面：后端校验 cover 文件类型合规后计算 coverPath、落库 coverPath、再将 cover 上传到 OSS。
+
+**请求头**：
+```
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: multipart/form-data
+```
+
+**请求参数**（multipart/form-data）：
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| mediaId | Long | 是 | 准备上传时返回的 Media 主键 |
+| success | Boolean | 是 | true=上传成功，false=上传失败 |
+| visibleUserIds | String | 是 | JSON数组字符串，例如 `[1,2,3]` 或 `[]`（必填，但可以为空数组）；success=true 时用于写 media_visible |
+| cover | File（二进制） | 是（success=true 时必填） | 封面图片文件；success=true 时后端校验类型合规后计算 coverPath、落库并上传到 OSS，success=false 时可不传 |
+| code | String | 否 | 失败时的错误码，便于日志 |
+| message | String | 否 | 失败时的描述，便于排查 |
+
+**成功响应**（200）：
+```json
+{
+  "code": 200,
+  "message": "已处理",
+  "data": null,
+  "timestamp": 1705564800000
+}
+```
+
+**失败响应**：未授权（401）、资源不存在（404）、请求参数错误（400）、文件格式不支持（4005）等。
+
+**业务逻辑**：
+1. 验证 JWT 并获取当前用户ID；校验 media 存在且归属当前用户
+2. **幂等**：若该 media 当前 **state != 1**（已处理过），直接返回 200，不再重复执行后续逻辑
+3. **success = true**：
+   - **先校验 OSS**：根据 media 的 storagePath 检查 OSS 上该对象是否存在（如 HEAD 或 GET 元数据），**不存在则视为失败**，将 state 置为 3，不执行后续写库
+   - 校验通过后：将 media.state 更新为 2（上传成功）；写 media_visible（与现有规则一致）
+   - **封面处理**：校验 cover 文件类型合规（仅允许图片格式），计算 coverPath（如 `images/covers/yyyy/MM/dd/{uuid}.{ext}`），将 coverPath 落库到 media，再将 cover 文件上传到 OSS；封面上传失败不影响主流程（可选降级）
+   - 将 state 更新为 6（待审核）；失效缓存等
+4. **success = false**：将 media.state 置为 3（上传失败）；若 OSS 上已有该对象可择机清理
+5. 成功/失败逻辑与现有「上传成功」「上传失败」处理一致（media_visible、封面、缓存等）
+
+**注意**：上传完成后媒体状态为 `state=6`（待审核），需审核通过后才能公开显示（`state=0`）。
 
 ---
 
@@ -2037,3 +2063,8 @@ Content-Type: application/json
   - 取消点赞：`POST /api/media/{id}/unlike`（需登录；Redis 先判 score>0 再 ZINCRBY -1）
   - 查询是否已赞：`GET /api/userLikeRecord/media/{mediaId}/status`（归属用户点赞记录，需登录，只查 Redis 以 Redis 为准，返回 true/false）
   - 热门排行榜：`GET /api/mediaVisible/rank`（游客可访问，query：category、size；返回 HotListItem 列表，按点赞数降序）
+
+### 2026-02-23
+- 上传流程改为「前端直传 OSS」两阶段方案（详见 `docs/upload_in_blocks.md`）：
+  - **准备上传**：`POST /api/media/upload` 增加必填参数 `file_hash`（前端计算），后端仅做幂等校验、不计算 hash；不再接收主文件，落库 Media（state=1）后返回 `mediaId`、`storagePath`，由前端使用 OSS 分块上传 SDK 直传。
+  - **通知上传结果**：新增 `POST /api/media/upload/complete`，前端在上传成功或失败后调用；后端先校验 OSS 对象存在再执行后续逻辑（成功/失败沿用现有逻辑），并做幂等（state≠1 直接返回）。

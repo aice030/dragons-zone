@@ -20,8 +20,30 @@
 | `/browse` | `src/views/MediaBrowse.vue` | 主浏览页：切换成员专区与类型筛选，滚动加载媒体，并提供登录/注册与用户菜单。 |
 | `/media/:id` | `src/views/MediaDetailPage.vue` → `MediaDetail.vue` | 媒体详情页：由 MediaDetailPage 从路由取 id 传入 MediaDetail，支持点赞、下载与上一/下一切换；关闭时 `router.back()`。 |
 | `/my-uploads` | `src/views/MyUploads.vue` | 我的上传页：按类型筛选查看个人上传列表/状态，并可查看详情或继续上传。 |
-| `/upload` | `src/views/UploadMedia.vue` | 上传页：图片支持批量/文件夹队列上传（每张图片的封面即该图片本身）；视频支持单文件上传且封面必填。 |
+| `/upload` | `src/views/UploadMedia.vue` | 上传页：图片支持批量/文件夹队列上传（每张图片的封面即该图片本身）；视频支持单文件上传且封面必填。主文件由前端直连 OSS（小文件预签名 PUT，大文件分片上传），详见下方「上传页与 OSS 直传」。 |
 | `/resource-manage` | `src/views/ResourceManage.vue` | 资源管理页（仅作者/管理员）：分“待审核列表”和“已上传列表”，支持审核通过/驳回与查看详情。 |
+
+## 上传页与 OSS 直传
+
+### 流程概览
+
+1. **准备上传**：调用 `prepareUpload()`（`POST /api/media/upload`），传 `file_hash`、`category`、`title`、`description`、`filename`；不传主文件与封面。后端落库 Media（state=1）并返回 `mediaId`、`storagePath`、`uploadUrl`（预签名 PUT）、`uploadUrlExpireSeconds`，以及可选 `stsCredentials`（STS 临时凭证，后端配置了 oss.sts 时返回）。
+2. **直传 OSS**：前端根据文件大小与是否拿到 `stsCredentials` 二选一：
+   - **小文件或未配置 STS**：用 `uploadUrl` 做一次 **PUT** 请求，body 为文件内容（`src/utils/ossUpload.js` 的 `uploadFileToOss`）。
+   - **大文件（≥5MB）且存在 `stsCredentials`**：用 `createOssClient(credentials)` 创建 OSS 客户端，调用 **分片上传** `multipartUpload(storagePath, file, { parallel, partSize, progress })`（`uploadFileToOssMultipart`）；进度通过 `onProgress(0～1)` 回传，前端展示百分比与进度条。
+3. **通知结果**：直传成功后调用 `uploadComplete()`（`POST /api/media/upload/complete`），传 `mediaId`、`success: true`、`visibleUserIds`、`cover`；失败时在 catch 中调用 `uploadComplete(..., success: false)`，避免列表一直显示「正在上传」。
+
+### 前端职责与文件
+
+- **接口**：`src/api/media.js` — `prepareUpload`、`uploadComplete`；无单独 STS 接口，凭证仅来自准备上传响应。
+- **OSS 客户端**：`src/utils/ossClient.js` — `createOssClient(credentials)`，参数为准备上传返回的 `stsCredentials`；内部对 `region` 做规范化（去掉 `.aliyuncs.com` 后缀以符合 ali-oss 要求）。
+- **上传实现**：`src/utils/ossUpload.js` — `uploadFileToOss(uploadUrl, file)`（PUT）；`uploadFileToOssMultipart(credentials, storagePath, file, { onProgress })`（分片，可选进度回调）。
+- **页面逻辑**：`src/views/UploadMedia.vue` — 单文件（视频）与批量（图片）均先准备上传，再按阈值（5MB）与 `stsCredentials` 选择 PUT 或分片；分片时传入 `onProgress`，单文件用 `uploadProgress`（0～100）展示进度条与文案，批量项用 `item.progress` 在状态列展示「上传中 xx%」与进度条。上传失败时若有 `mediaId` 则调用 `uploadComplete(mediaId, success: false)`。
+
+### 我的上传页与列表刷新
+
+- **`src/views/MyUploads.vue`**：上传入口与上传列表用 **`v-show`** 切换（非 `v-if`），保证切到「上传列表」后 `UploadMedia` 仍挂载，后台分片上传完成后能正常 `emit('upload-success')`。
+- **上传成功**：父组件监听 `@upload-success`，执行 `handleUploadSuccess()` → `switchPanel('list', true)` 再 `await loadMyUploads(true)`，列表拉取最新数据，无需手动刷新。
 
 ## 新增：资源管理（Resource Manage）
 

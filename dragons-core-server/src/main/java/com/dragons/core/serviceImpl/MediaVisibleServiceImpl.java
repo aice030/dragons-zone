@@ -377,95 +377,6 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
     }
 
     /**
-     * 从缓存构建我的上传列表结果（如果缓存命中）
-     *
-     * @param cachedList 缓存的列表数据
-     * @param uploaderUserId 上传者用户ID（用于日志）
-     * @param safePage 页码（用于日志）
-     * @param safeSize 每页数量（用于日志）
-     * @param category 分类（用于日志）
-     * @return 如果缓存命中返回结果，否则返回 null
-     */
-    private MyUploadPageResult buildMyUploadResultFromCache(MediaListCacheValue cachedList, Long uploaderUserId, 
-                                                             int safePage, int safeSize, Byte category) {
-        if (cachedList == null || cachedList.getMediaIds() == null || cachedList.getMediaIds().isEmpty()) {
-            return null;
-        }
-        
-        List<Long> cachedMediaIds = cachedList.getMediaIds();
-        Map<Long, Media> cachedMediaMap = redisCacheMediaCoreService.batchGetMediaCore(cachedMediaIds);
-        
-        // 找出未命中的ID，从DB加载（需要加分布式锁保护）
-        List<Long> missingIds = cachedMediaIds.stream()
-                .filter(id -> !cachedMediaMap.containsKey(id))
-                .collect(Collectors.toList());
-        
-        // 处理未命中的 media:core，加分布式锁保护
-        loadMissingMediaWithLock(missingIds, cachedMediaMap);
-        
-        // 构建结果
-        List<Media> records = new ArrayList<>();
-        for (Long mediaId : cachedMediaIds) {
-            Media media = cachedMediaMap.get(mediaId);
-            if (media != null && media.getState() != null && media.getState() != 5) {
-                records.add(media);
-            }
-        }
-        long total = cachedList.getTotal() != null ? cachedList.getTotal() : 0L;
-        
-        // 构建返回结果
-        List<MyUploadListItem> list = new ArrayList<>();
-        for (Media m : records) {
-            MyUploadListItem item = new MyUploadListItem(
-                    m.getId(),
-                    m.getCategory(),
-                    m.getState(),
-                    m.getTitle(),
-                    m.getCoverPath(),
-                    m.getUpdateTime()
-            );
-            // 生成封面预签名URL：用于"我的上传"列表缩略图展示（允许 state=6/7）
-            item.coverUrl = buildCoverPresignedUrl(m.getCoverPath());
-            list.add(item);
-        }
-        
-        return new MyUploadPageResult(total, list);
-    }
-
-    /**
-     * 写入我的上传列表缓存（包含列表缓存和 media:core 缓存）
-     *
-     * @param uploaderUserId 上传者用户ID
-     * @param category 分类：null=all，0=图片，1=视频
-     * @param safePage 页码（从1开始）
-     * @param safeSize 每页数量
-     * @param total 列表总数
-     * @param records 媒体记录列表
-     */
-    private void writeMyUploadListCache(Long uploaderUserId, Byte category, int safePage, int safeSize, 
-                                        long total, List<Media> records) {
-        if (records != null && !records.isEmpty()) {
-            List<Long> mediaIds = records.stream()
-                    .map(Media::getId)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-            
-            // 写入列表缓存（包含total和mediaIds，排除 state=5 的所有媒体ID）
-            redisCacheMediaListService.putMyUploadList(uploaderUserId, category, safePage, safeSize, total, mediaIds);
-            
-            // 批量写入 media:core 缓存（仅 state=0）
-            for (Media media : records) {
-                if (media.getState() != null && media.getState() == 0) {
-                    redisCacheMediaCoreService.putMediaCore(media.getId(), media);
-                }
-            }
-        } else {
-            // 查询结果为空，写入空列表缓存（防止缓存穿透）
-            redisCacheMediaListService.putMyUploadList(uploaderUserId, category, safePage, safeSize, 0L, Collections.emptyList());
-        }
-    }
-
-    /**
      * 查询 media:core 数据并写入缓存
      *
      * @param mediaId 媒体ID
@@ -623,157 +534,46 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
-        // 先查缓存：获取媒体列表（包含total和mediaIds）
-        MediaListCacheValue cachedList = redisCacheMediaListService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
-        
-        List<Media> records;
-        long total;
+        // 直接查数据库获取本页 (total, records)，再根据 id 从 media:core 或 DB 结果填充
+        MediaListQueryResult queryResult = queryMyUploadListFromDB(uploaderUserId, category, safePage, safeSize);
+        long total = queryResult.total;
+        List<Media> records = queryResult.records;
 
-        if (cachedList != null && cachedList.getMediaIds() != null && !cachedList.getMediaIds().isEmpty()) {
-            // media:list 缓存命中：批量从 media:core 获取数据
-            List<Long> cachedMediaIds = cachedList.getMediaIds();
-            log.info("listMyUpload cache hit uploaderUserId={} category={} page={} size={} total={} cachedIds={}", 
-                    uploaderUserId, category, safePage, safeSize, cachedList.getTotal(), cachedMediaIds.size());
-            
-            Map<Long, Media> cachedMediaMap = redisCacheMediaCoreService.batchGetMediaCore(cachedMediaIds);
-            
-            // 找出media:core缓存中不存在的 media id，从DB加载（需要加分布式锁保护）
-            // 注意：listMyUpload 允许显示 state=6/7，但 media:core 只缓存 state=0
-            // 所以未命中的 media id 可能是 state=6/7 的媒体，需要从DB加载
-            List<Long> missingIds = cachedMediaIds.stream()
-                    .filter(id -> !cachedMediaMap.containsKey(id))
-                    .collect(Collectors.toList());
+        if (records == null || records.isEmpty()) {
+            log.info("listMyUpload uploaderUserId={} page={} size={} category={} total=0", uploaderUserId, safePage, safeSize, category);
+            return new MyUploadPageResult(total, new ArrayList<>());
+        }
 
-            // 处理未命中的 media:core，加分布式锁保护
-            loadMissingMediaWithLock(missingIds, cachedMediaMap);
-            
-            // 按原始ID列表顺序构建结果，保持排序
-            records = new ArrayList<>();
-            for (Long mediaId : cachedMediaIds) {
-                Media media = cachedMediaMap.get(mediaId);
-                if (media != null && media.getState() != null && media.getState() != 5) {
-                    records.add(media);
-                }
-            }
-            
-            // 使用缓存中的 total（避免再次查询数据库）
-            total = cachedList.getTotal() != null ? cachedList.getTotal() : 0L;
-        } else {
-            // media:my 缓存未命中：整个「我的上传列表」不存在，尝试获取分布式锁，防止缓存击穿
-            log.info("listMyUpload cache miss uploaderUserId={} category={} page={} size={}", 
-                    uploaderUserId, category, safePage, safeSize);
-            
-            boolean lockAcquired = false;
-            String requestId = UUID.randomUUID().toString();
-            // 锁续期线程池
-            ScheduledExecutorService lockRenewalExecutor = null;
-            
-            try {
-                // 1. 尝试获取分布式锁（最多重试3次）
-                for (int retryCount = 0; retryCount < 3; retryCount++) {
-                    lockAcquired = redisCacheMediaListService.tryLockMyUploadList(uploaderUserId, category, safePage, safeSize, requestId);
-                    if (lockAcquired) {
-                        // 获取锁成功，启动后台线程自动续期（WatchDog机制）
-                        // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
-                        final Long finalUploaderUserId = uploaderUserId;
-                        final Byte finalCategory = category;
-                        final int finalSafePage = safePage;
-                        final int finalSafeSize = safeSize;
-                        final String finalRequestId = requestId;
-                        lockRenewalExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                            Thread t = new Thread(r, "lock-renewal-my-" + finalUploaderUserId + "-" + finalCategory + "-" + finalSafePage + "-" + finalSafeSize);
-                            t.setDaemon(true);
-                            return t;
-                        });
-                        lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                            boolean renewed = redisCacheMediaListService.renewLockMyUploadList(finalUploaderUserId, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
-                            if (!renewed) {
-                                log.warn("lock renewal failed for my upload list, lock may have been released uploaderUserId={} category={} page={} size={} requestId={}", 
-                                        finalUploaderUserId, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
-                            }
-                        }, 0, 2, TimeUnit.SECONDS); // 立即开始，每2秒执行一次
-                        break; // 获取成功，跳出循环
-                    }
-                    // 获取锁失败，等待100ms后重试查询缓存
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        log.warn("lock retry interrupted uploaderUserId={} category={} page={} size={}", 
-                                uploaderUserId, category, safePage, safeSize);
-                        break;
-                    }
-                    // 重试查询缓存，可能其他线程已经写入
-                    MediaListCacheValue retryCachedList = redisCacheMediaListService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
-                    MyUploadPageResult retryResult = buildMyUploadResultFromCache(retryCachedList, uploaderUserId, safePage, safeSize, category);
-                    if (retryResult != null) {
-                        // 缓存已命中，直接返回（不需要释放锁，因为没获取到）
-                        return retryResult;
-                    }
-                }
-                
-                if (lockAcquired) {
-                    // 2. 获取到分布式锁后，再次查询缓存（双重检测）
-                    MediaListCacheValue doubleCheckCachedList = redisCacheMediaListService.getMyUploadList(uploaderUserId, category, safePage, safeSize);
-                    MyUploadPageResult doubleCheckResult = buildMyUploadResultFromCache(doubleCheckCachedList, uploaderUserId, safePage, safeSize, category);
-                    if (doubleCheckResult != null) {
-                        // 其他线程已经写入缓存，直接返回（需要释放锁）
-                        return doubleCheckResult;
-                    }
-                    
-                    // 3. 缓存仍未命中，从数据库查询并写入缓存
-                    MediaListQueryResult queryResult = queryMyUploadListFromDB(uploaderUserId, category, safePage, safeSize);
-                    total = queryResult.total;
-                    records = queryResult.records;
-                    
-                    // 写入列表缓存（包含total和mediaIds）和 media:core 缓存
-                    writeMyUploadListCache(uploaderUserId, category, safePage, safeSize, total, records);
-                } else {
-                    // 获取锁失败，降级查询数据库（不写入缓存）
-                    log.warn("listMyUpload failed to acquire lock, falling back to direct DB query uploaderUserId={} category={} page={} size={}", 
-                            uploaderUserId, category, safePage, safeSize);
-                    
-                    MediaListQueryResult queryResult = queryMyUploadListFromDB(uploaderUserId, category, safePage, safeSize);
-                    total = queryResult.total;
-                    records = queryResult.records;
-                }
-            } finally {
-                // 停止锁续期线程
-                if (lockRenewalExecutor != null) {
-                    lockRenewalExecutor.shutdown();
-                    try {
-                        // 等待最多1秒，确保续期任务完成
-                        if (!lockRenewalExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
-                            lockRenewalExecutor.shutdownNow();
-                        }
-                    } catch (InterruptedException e) {
-                        lockRenewalExecutor.shutdownNow();
-                        Thread.currentThread().interrupt();
-                    }
-                }
-                // 释放分布式锁
-                if (lockAcquired) {
-                    redisCacheMediaListService.unlockMyUploadList(uploaderUserId, category, safePage, safeSize, requestId);
-                }
+        List<Long> mediaIds = records.stream()
+                .map(Media::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        Map<Long, Media> cachedMap = redisCacheMediaCoreService.batchGetMediaCore(mediaIds);
+        Map<Long, Media> recordById = new HashMap<>();
+        for (Media m : records) {
+            if (m.getId() != null) {
+                recordById.put(m.getId(), m);
             }
         }
 
-        // 构建返回结果
         List<MyUploadListItem> list = new ArrayList<>();
-        if (records != null) {
-            for (Media m : records) {
-                MyUploadListItem item = new MyUploadListItem(
-                        m.getId(),
-                        m.getCategory(),
-                        m.getState(),
-                        m.getTitle(),
-                        m.getCoverPath(),
-                        m.getUpdateTime()
-                );
-                // 生成封面预签名URL：用于“我的上传”列表缩略图展示（允许 state=6/7）
-                item.coverUrl = buildCoverPresignedUrl(m.getCoverPath());
-                list.add(item);
+        for (Long id : mediaIds) {
+            Media m = cachedMap.containsKey(id) ? cachedMap.get(id) : recordById.get(id);
+            if (m == null || (m.getState() != null && m.getState() == 5)) {
+                continue;
             }
+            MyUploadListItem item = new MyUploadListItem(
+                    m.getId(),
+                    m.getCategory(),
+                    m.getState(),
+                    m.getTitle(),
+                    m.getCoverPath(),
+                    m.getUpdateTime()
+            );
+            String coverUrl = (m.getCoverUrl() != null && !m.getCoverUrl().trim().isEmpty())
+                    ? m.getCoverUrl() : buildCoverPresignedUrl(m.getCoverPath());
+            item.coverUrl = coverUrl;
+            list.add(item);
         }
 
         log.info("listMyUpload uploaderUserId={} page={} size={} category={} total={}", uploaderUserId, safePage, safeSize, category, total);

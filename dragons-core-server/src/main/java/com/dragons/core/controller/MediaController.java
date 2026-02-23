@@ -32,51 +32,78 @@ public class MediaController {
     private final IMediaService mediaService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * 构造器注入（显式 @Autowired，便于学习）
-     */
     @Autowired
     public MediaController(IMediaService mediaService) {
         this.mediaService = mediaService;
     }
 
     /**
-     * 上传媒体资源（图片/视频）
+     * 准备上传媒体资源（图片/视频）
      *
      * multipart/form-data:
-     * - file: 文件
+     * - file_hash: 前端计算的文件 hash（必填）
      * - category: 0=图片，1=视频
-     * - visibleUserIds: JSON数组字符串，例如 [1,2,3] 或 []（必填，但可以为空数组）
      * - title: 标题（可选）
      * - description: 描述（可选）
-     * - cover: 封面图片（必填）
+     * - filename: 可选原始文件名（用于生成存储路径扩展名）
+     *
+     * 注意：本接口不接收主文件与封面，不写 media_visible；主文件由前端直传对象存储，封面与 visibleUserIds 在「通知上传结果」时提交。
      */
     @PostMapping("/upload")
     public Result<IMediaService.UploadResult> upload(
             @AuthenticationPrincipal JwtPrincipal principal,
-            @RequestPart("file") MultipartFile file,
+            @RequestParam("file_hash") String fileHash,
             @RequestParam("category") Byte category,
-            @RequestParam("visibleUserIds") String visibleUserIdsJson,
             @RequestParam(value = "title", required = false) String title,
             @RequestParam(value = "description", required = false) String description,
-            @RequestPart(value = "cover", required = true) MultipartFile cover
+            @RequestParam(value = "filename", required = false) String filename
     ) {
         if (principal == null) {
             return Result.error(ResponseCode.UNAUTHORIZED);
         }
-        
-        List<Long> visibleUserIds = parseVisibleUserIds(visibleUserIdsJson);
 
-        IMediaService.UploadResult result = mediaService.upload(
-                file,
+        IMediaService.UploadResult result = mediaService.prepareUpload(
+                fileHash,
                 category,
-                visibleUserIds,
                 principal.getUserId(),
                 title,
                 description,
+                filename
+        );
+        return Result.success("可以开始上传", result);
+    }
+
+    /**
+     * 通知上传结果（前端直传 OSS 成功或失败后调用）
+     *
+     * POST /api/media/upload/complete
+     * Content-Type: multipart/form-data
+     * - mediaId, success, visibleUserIds 为表单项；cover 为文件（必填）
+     */
+    @PostMapping("/upload/complete")
+    public Result<Void> uploadComplete(
+            @AuthenticationPrincipal JwtPrincipal principal,
+            @RequestParam("mediaId") Long mediaId,
+            @RequestParam("success") Boolean success,
+            @RequestParam("visibleUserIds") String visibleUserIdsJson,
+            @RequestPart(value = "cover", required = false) MultipartFile cover
+    ) {
+        if (principal == null) {
+            return Result.error(ResponseCode.UNAUTHORIZED);
+        }
+        if (mediaId == null || success == null) {
+            return Result.error(ResponseCode.BAD_REQUEST);
+        }
+
+        List<Long> visibleUserIds = parseVisibleUserIds(visibleUserIdsJson);
+        mediaService.uploadComplete(
+                mediaId,
+                success,
+                visibleUserIds,
+                principal.getUserId(),
                 cover
         );
-        return Result.success("上传成功", result);
+        return Result.success("已处理", null);
     }
 
     /**

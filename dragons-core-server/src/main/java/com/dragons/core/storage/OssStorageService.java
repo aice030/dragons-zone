@@ -1,6 +1,7 @@
 package com.dragons.core.storage;
 
 import com.aliyun.oss.OSS;
+import com.aliyun.oss.HttpMethod;
 import com.aliyun.oss.model.GeneratePresignedUrlRequest;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.aliyun.oss.model.PutObjectRequest;
@@ -96,6 +97,26 @@ public class OssStorageService implements StorageService {
             URL url = ossClient.generatePresignedUrl(request);
             return url != null ? url.toString() : null;
         } catch (Exception e) {
+            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        }
+    }
+
+    @Override
+    public String getPresignedUploadUrl(String objectName, int expirySeconds) {
+        try {
+            GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(bucket, objectName);
+            request.setMethod(HttpMethod.PUT);
+            request.setExpiration(new Date(System.currentTimeMillis() + expirySeconds * 1000L));
+            URL url = ossClient.generatePresignedUrl(request);
+            if (url == null) return null;
+            // 前端直传时浏览器常要求 HTTPS，且部分 Bucket 仅允许 HTTPS；强制返回 https 协议避免 403
+            String urlStr = url.toString();
+            if (urlStr != null && urlStr.startsWith("http://")) {
+                urlStr = "https://" + urlStr.substring(7);
+            }
+            return urlStr;
+        } catch (Exception e) {
+            log.error("OSS generate upload presigned url failed objectName={} bucket={}", objectName, bucket, e);
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
     }

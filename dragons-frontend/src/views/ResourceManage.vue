@@ -710,9 +710,10 @@ function formatTime(value) {
 function switchModule(module) {
   if (activeModule.value === module) return
   activeModule.value = module
-  if (module === 'audit' && pendingList.value.length === 0) loadPending(true)
-  if (module === 'manage' && uploadedList.value.length === 0) loadUploaded(true)
-  if (module === 'users' && userList.value.length === 0) loadUserList(true)
+  // 切回某模块时始终刷新该模块列表，与「我的上传」行为一致，避免看到旧数据
+  if (module === 'audit') loadPending(true)
+  else if (module === 'manage') loadUploaded(true)
+  else if (module === 'users') loadUserList(true)
 }
 
 function switchCategory(category) {

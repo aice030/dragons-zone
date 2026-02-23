@@ -74,12 +74,11 @@
 
         <!-- 右侧内容 -->
         <main class="myuploads-main">
-          <template v-if="activePanel === 'upload'">
-            <UploadMedia :embedded="true" />
-          </template>
+          <div v-show="activePanel === 'upload'" class="myuploads-panel-upload">
+            <UploadMedia :embedded="true" @upload-success="handleUploadSuccess" />
+          </div>
 
-          <template v-else>
-            <div class="my-uploads-container">
+          <div v-show="activePanel !== 'upload'" class="my-uploads-container">
               <div class="my-uploads-header">
                 <div class="header-actions-row">
                   <div class="category-selector-inline">
@@ -218,7 +217,6 @@
               </div>
 
             </div>
-          </template>
         </main>
       </div>
     </div>
@@ -338,6 +336,11 @@ function getCategoryClass(category) {
 
 function getStateLabel(state) {
   if (state === 0) return '正常'
+  if (state === 1) return '上传中'
+  if (state === 2) return '上传成功'
+  if (state === 3) return '上传失败'
+  if (state === 4) return '正在删除'
+  if (state === 5) return '已删除'
   if (state === 6) return '待审核'
   if (state === 7) return '审核未通过'
   return '未知'
@@ -345,6 +348,11 @@ function getStateLabel(state) {
 
 function getStateClass(state) {
   if (state === 0) return 'state-normal'
+  if (state === 1) return 'state-uploading'
+  if (state === 2) return 'state-upload-success'
+  if (state === 3) return 'state-upload-failed'
+  if (state === 4) return 'state-deleting'
+  if (state === 5) return 'state-deleted'
   if (state === 6) return 'state-pending'
   if (state === 7) return 'state-rejected'
   return ''
@@ -407,7 +415,13 @@ function handleUploadNew() {
   switchPanel('upload')
 }
 
-function switchPanel(panel) {
+async function handleUploadSuccess() {
+  switchPanel('list', true)
+  // 上传成功后拉取一次列表并等待完成，确保界面显示最新状态
+  await loadMyUploads(true)
+}
+
+function switchPanel(panel, skipLoadList = false) {
   if (activePanel.value === panel) return
 
   // 切换面板时，清理批量删除状态与弹窗，避免“残留 UI”
@@ -418,6 +432,11 @@ function switchPanel(panel) {
   detailMediaId.value = null
 
   activePanel.value = panel
+
+  // 切回上传列表时刷新列表，使刚上传的内容立即显示（由调用方 skipLoadList 时可自行 await loadMyUploads）
+  if (panel === 'list' && !skipLoadList) {
+    loadMyUploads(true)
+  }
 }
 
 function handleBulkDelete() {

@@ -114,5 +114,22 @@ public class MinioStorageService implements StorageService {
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
         }
     }
+
+    @Override
+    public String getPresignedUploadUrl(String objectName, int expirySeconds) {
+        try {
+            return minioClient.getPresignedObjectUrl(
+                    GetPresignedObjectUrlArgs.builder()
+                            .method(Method.PUT)
+                            .bucket(bucket)
+                            .object(objectName)
+                            .expiry(expirySeconds)
+                            .build()
+            );
+        } catch (Exception e) {
+            log.error("MinIO generate upload presigned url failed objectName={} bucket={}", objectName, bucket, e);
+            throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        }
+    }
 }
 

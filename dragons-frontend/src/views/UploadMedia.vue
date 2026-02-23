@@ -124,8 +124,11 @@
                       </td>
                       <td class="col-status">
                         <span class="queue-status" :class="`status-${item.status}`">
-                          {{ statusLabel(item.status) }}
+                          {{ item.status === 'uploading' && item.progress != null ? `上传中 ${item.progress}%` : statusLabel(item.status) }}
                         </span>
+                        <div v-if="item.status === 'uploading' && item.progress != null" class="queue-progress-bar-wrap">
+                          <div class="queue-progress-bar" :style="{ width: item.progress + '%' }"></div>
+                        </div>
                       </td>
                       <td class="col-remove">
                         <button
@@ -180,7 +183,7 @@
 
           <!-- 封面图 -->
           <div v-if="contentMode === 'video'" class="upload-media-field">
-            <label class="upload-media-field-label">封面 <span class="required">*</span></label>
+            <label class="upload-media-field-label">封面，不传的话自动用视频第一帧，可能会很抽象</label>
             <div class="upload-media-cover-wrapper">
               <img
                 v-if="coverPreview"
@@ -259,13 +262,19 @@
           <div class="upload-media-actions">
             <button type="button" class="btn-cancel" @click="handleCancel">取消</button>
             <template v-if="contentMode === 'video'">
+              <div v-if="uploading" class="upload-progress-inline">
+                <div class="upload-progress-bar-wrap">
+                  <div class="upload-progress-bar" :style="{ width: uploadProgress + '%' }"></div>
+                </div>
+                <span class="upload-progress-text">{{ uploadProgress > 0 ? `上传中 ${uploadProgress}%` : '上传中...' }}</span>
+              </div>
               <button
                 type="button"
                 class="btn-submit"
                 :disabled="!canSubmit || uploading"
                 @click="handleSubmit"
               >
-                {{ uploading ? '上传中...' : '提交' }}
+                {{ uploading ? (uploadProgress > 0 ? `${uploadProgress}%` : '上传中...') : '提交' }}
               </button>
             </template>
             <template v-else>
@@ -282,6 +291,22 @@
           </div>
         </div>
       </div>
+
+      <!-- 上传结果提示（小弹窗） -->
+      <Teleport to="body">
+        <Transition name="toast-fade">
+          <div
+            v-if="toastVisible"
+            class="upload-toast"
+            :class="toastType === 'success' ? 'upload-toast-success' : 'upload-toast-error'"
+            role="alert"
+            @click="toastVisible = false"
+          >
+            <span class="upload-toast-message">{{ toastMessage }}</span>
+            <button type="button" class="upload-toast-close" aria-label="关闭">×</button>
+          </div>
+        </Transition>
+      </Teleport>
     </div>
   </div>
 </template>
@@ -290,19 +315,23 @@
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import NavBar from '@/components/NavBar.vue'
-import { useUserStore } from '@/stores/user'
 import { getMembers } from '@/config/members'
-import { uploadMedia } from '@/api/media'
+import { prepareUpload, uploadComplete } from '@/api/media'
+import { computeFileHash } from '@/utils/fileHash'
+import { uploadFileToOss, uploadFileToOssMultipart } from '@/utils/ossUpload'
 
-defineProps({
+/** 超过此大小且后端返回了 stsCredentials 时走分块上传（5MB） */
+const CHUNK_UPLOAD_THRESHOLD = 5 * 1024 * 1024
+
+const props = defineProps({
   embedded: {
     type: Boolean,
     default: false
   }
 })
 
+const emit = defineEmits(['upload-success'])
 const router = useRouter()
-const userStore = useUserStore()
 
 const fileInputRef = ref(null)
 const coverInputRef = ref(null)
@@ -312,6 +341,8 @@ const coverPreview = ref('')
 const fileError = ref('')
 const coverError = ref('')
 const uploading = ref(false)
+/** 分片上传进度 0～100，仅走分块上传时有值；PUT 直传时为 0 显示“上传中” */
+const uploadProgress = ref(0)
 const contentMode = ref('image') // 'image' | 'video'
 
 // 批量上传
@@ -322,6 +353,12 @@ const batchUploading = ref(false)
 const batchDone = ref(0)
 const batchError = ref('')
 const batchInfo = ref('')
+
+// 上传结果提示
+const toastVisible = ref(false)
+const toastMessage = ref('')
+const toastType = ref('success') // 'success' | 'error'
+let toastTimer = null
 
 const form = ref({
   title: '',
@@ -339,8 +376,8 @@ const displayQueue = computed(() =>
 // 是否可以提交
 const canSubmit = computed(() => {
   if (contentMode.value === 'image') return queue.value.length > 0
-  // 视频模式：需选择视频文件且选择封面
-  return selectedFile.value !== null && coverFile.value !== null
+  // 视频模式：只需选择视频文件，封面可选（可提交时自动抽帧）
+  return selectedFile.value !== null
 })
 
 function setContentMode(mode) {
@@ -501,6 +538,84 @@ function triggerCoverSelect() {
   coverInputRef.value?.click()
 }
 
+/**
+ * 从视频文件截取第一帧为 JPEG 图片（用于未选封面时自动生成封面）
+ * @param {File} videoFile 视频文件
+ * @returns {Promise<File|null>} 封面图片 File（cover.jpg），失败返回 null
+ */
+function extractFirstFrameFromVideo(videoFile) {
+  return new Promise((resolve) => {
+    let done = false
+    const url = URL.createObjectURL(videoFile)
+    const video = document.createElement('video')
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'auto'
+    video.src = url
+
+    const cleanup = () => {
+      URL.revokeObjectURL(url)
+      video.remove()
+    }
+
+    const finish = (file) => {
+      if (done) return
+      done = true
+      cleanup()
+      resolve(file)
+    }
+
+    const drawFrame = () => {
+      if (done) return
+      try {
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+          finish(null)
+          return
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(video, 0, 0)
+        canvas.toBlob(
+          (blob) => {
+            if (done) return
+            if (!blob) {
+              finish(null)
+              return
+            }
+            finish(new File([blob], 'cover.jpg', { type: 'image/jpeg' }))
+          },
+          'image/jpeg',
+          0.9
+        )
+      } catch (e) {
+        console.warn('extractFirstFrameFromVideo draw error', e)
+        finish(null)
+      }
+    }
+
+    video.addEventListener('error', () => finish(null))
+    video.addEventListener('seeked', () => {
+      clearTimeout(fallbackTimer)
+      drawFrame()
+    }, { once: true })
+    video.addEventListener('loadeddata', () => {
+      video.currentTime = 0
+    })
+    const fallbackTimer = setTimeout(() => {
+      if (done) return
+      if (video.readyState >= 2 && video.videoWidth > 0) {
+        drawFrame()
+      } else {
+        finish(null)
+      }
+    }, 2000)
+
+    video.load()
+  })
+}
+
 function handleCoverSelect(event) {
   const file = event.target.files?.[0]
   if (!file) {
@@ -539,6 +654,34 @@ function handleZoneCheckboxChange(zoneId, event) {
   }
 }
 
+function showToast(message, type = 'success') {
+  if (toastTimer) clearTimeout(toastTimer)
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
+  toastTimer = setTimeout(() => {
+    toastVisible.value = false
+    toastTimer = null
+  }, 2500)
+}
+
+/** 清空当前表单：文件、封面、标题、简介、标签、错误信息 */
+function resetForm() {
+  selectedFile.value = null
+  coverFile.value = null
+  coverPreview.value = ''
+  fileError.value = ''
+  coverError.value = ''
+  batchError.value = ''
+  batchInfo.value = ''
+  form.value.title = ''
+  form.value.description = ''
+  form.value.visibleUserIds = []
+  if (fileInputRef.value) fileInputRef.value.value = ''
+  if (coverInputRef.value) coverInputRef.value.value = ''
+  clearQueue()
+}
+
 function handleCancel() {
   router.push('/my-uploads')
 }
@@ -551,35 +694,94 @@ async function handleSubmit() {
     fileError.value = '请选择视频文件'
     return
   }
-  if (contentMode.value === 'video' && !coverFile.value) {
-    coverError.value = '请选择封面'
-    return
-  }
 
   uploading.value = true
   fileError.value = ''
   coverError.value = ''
+  uploadProgress.value = 0
 
+  let mediaId = null
   try {
-    const fd = new FormData()
-    fd.append('file', selectedFile.value)
+    const file = selectedFile.value
     const category = contentMode.value === 'video' ? 1 : 0
-    fd.append('category', String(category))
-    fd.append('visibleUserIds', JSON.stringify(form.value.visibleUserIds || []))
-    if (form.value.title) fd.append('title', form.value.title)
-    if (form.value.description) fd.append('description', form.value.description)
-    if (contentMode.value === 'video') fd.append('cover', coverFile.value)
 
-    const res = await uploadMedia(fd)
-    if (res && res.code !== 200) {
-      throw new Error(res.message || '上传失败')
+    // 第一步：计算文件 hash 并调用“准备上传”接口
+    const fileHash = await computeFileHash(file)
+
+    const prepareRes = await prepareUpload({
+      fileHash,
+      category,
+      title: form.value.title || '',
+      description: form.value.description || '',
+      filename: file.name
+    })
+
+    if (!prepareRes || prepareRes.code !== 200) {
+      throw new Error(prepareRes?.message || '准备上传失败')
     }
-    router.push('/my-uploads')
+
+    const prepareData = prepareRes.data || {}
+    mediaId = prepareData.mediaId
+    const uploadUrl = prepareData.uploadUrl
+
+    if (!mediaId || !uploadUrl) {
+      throw new Error('准备上传返回数据不完整')
+    }
+
+    // 第二步：大文件且有 STS 时走分块上传，否则预签名 PUT 直传
+    const hasSts = !!prepareData.stsCredentials
+    const overThreshold = file.size >= CHUNK_UPLOAD_THRESHOLD
+    console.log('上传方式判断 file_size:', file.size, 'hasSts:', hasSts, 'overThreshold(>=5MB):', overThreshold)
+    if (hasSts && overThreshold) {
+      await uploadFileToOssMultipart(prepareData.stsCredentials, prepareData.storagePath, file, {
+        onProgress: (p) => { uploadProgress.value = Math.round((p ?? 0) * 100) }
+      })
+    } else {
+      await uploadFileToOss(uploadUrl, file)
+    }
+
+    // 第三步：视频且未选封面时自动抽首帧作为封面
+    let coverToSend = contentMode.value === 'video' ? coverFile.value : file
+    if (contentMode.value === 'video' && !coverToSend) {
+      const extractedCover = await extractFirstFrameFromVideo(file)
+      coverToSend = extractedCover || null
+    }
+
+    // 第四步：通知上传结果
+    const completeRes = await uploadComplete({
+      mediaId,
+      success: true,
+      visibleUserIds: form.value.visibleUserIds || [],
+      cover: contentMode.value === 'video' ? coverToSend : file
+    })
+
+    if (completeRes && completeRes.code !== 200) {
+      throw new Error(completeRes.message || '通知上传结果失败')
+    }
+
+    showToast('上传成功', 'success')
+    resetForm()
+    if (props.embedded) {
+      emit('upload-success')
+    } else {
+      setTimeout(() => {
+        router.push('/my-uploads')
+      }, 1200)
+    }
   } catch (error) {
     console.error('上传失败:', error)
+    if (mediaId != null) {
+      try {
+        await uploadComplete({ mediaId, success: false, visibleUserIds: [] })
+      } catch (e) {
+        console.error('通知上传失败结果失败', e)
+      }
+    }
+    showToast('上传失败：' + (error?.message || '请重试'), 'error')
     fileError.value = error?.message || '上传失败，请重试'
   } finally {
     uploading.value = false
+    uploadProgress.value = 0
   }
 }
 
@@ -588,9 +790,6 @@ async function startBatchUpload() {
   batchUploading.value = true
   batchDone.value = 0
   batchError.value = ''
-
-  // 批量仅图片
-  const category = 0
 
   for (let i = 0; i < queue.value.length; i++) {
     const item = queue.value[i]
@@ -601,24 +800,70 @@ async function startBatchUpload() {
     }
     item.status = 'uploading'
     item.errorMsg = ''
+    item.progress = 0
 
     try {
-      const fd = new FormData()
-      fd.append('file', item.file)
-      // 图片类型：封面即为该图片本身
-      fd.append('cover', item.file)
-      fd.append('category', String(category))
-      fd.append('visibleUserIds', JSON.stringify(form.value.visibleUserIds || []))
-      if (form.value.title) fd.append('title', form.value.title)
-      if (form.value.description) fd.append('description', form.value.description)
+      const file = item.file
+      const category = 0
 
-      const res = await uploadMedia(fd)
-      if (res && res.code !== 200) {
-        throw new Error(res.message || '上传失败')
+      // 第一步：计算文件 hash 并调用“准备上传”接口
+      const fileHash = await computeFileHash(file)
+      let mediaId = null
+
+      const prepareRes = await prepareUpload({
+        fileHash,
+        category,
+        title: form.value.title || '',
+        description: form.value.description || '',
+        filename: file.name
+      })
+
+      if (!prepareRes || prepareRes.code !== 200) {
+        throw new Error(prepareRes?.message || '准备上传失败')
       }
+
+      const prepareData = prepareRes.data || {}
+      mediaId = prepareData.mediaId
+      const uploadUrl = prepareData.uploadUrl
+
+      if (!mediaId || !uploadUrl) {
+        throw new Error('准备上传返回数据不完整')
+      }
+
+      // 第二步：大文件且有 STS 时走分块上传，否则预签名 PUT 直传
+      const hasSts = !!prepareData.stsCredentials
+      const overThreshold = file.size >= CHUNK_UPLOAD_THRESHOLD
+      console.log('上传方式判断 file_size:', file.size, 'hasSts:', hasSts, 'overThreshold(>=5MB):', overThreshold)
+      if (hasSts && overThreshold) {
+        await uploadFileToOssMultipart(prepareData.stsCredentials, prepareData.storagePath, file, {
+          onProgress: (p) => { item.progress = Math.round((p ?? 0) * 100) }
+        })
+      } else {
+        await uploadFileToOss(uploadUrl, file)
+      }
+
+      // 第三步：通知上传结果（图片封面即为原图）
+      const completeRes = await uploadComplete({
+        mediaId,
+        success: true,
+        visibleUserIds: form.value.visibleUserIds || [],
+        cover: file
+      })
+
+      if (completeRes && completeRes.code !== 200) {
+        throw new Error(completeRes.message || '通知上传结果失败')
+      }
+
       item.status = 'success'
-      item.mediaId = res?.data?.mediaId ?? null
+      item.mediaId = mediaId
     } catch (err) {
+      if (mediaId != null) {
+        try {
+          await uploadComplete({ mediaId, success: false, visibleUserIds: [] })
+        } catch (e) {
+          console.error('通知上传失败结果失败', e)
+        }
+      }
       item.status = 'failed'
       item.errorMsg = err?.message || '上传失败'
     } finally {
@@ -626,12 +871,21 @@ async function startBatchUpload() {
     }
   }
 
+  const successCount = queue.value.filter((i) => i.status === 'success').length
+  const failCount = queue.value.filter((i) => i.status === 'failed').length
+  if (failCount === 0) {
+    showToast('全部上传成功', 'success')
+  } else {
+    showToast(`上传完成：${successCount} 张成功，${failCount} 张失败`, 'error')
+  }
   batchUploading.value = false
+  resetForm()
 }
 
 // 导航栏相关事件监听已移至 NavBar 组件
 // 离开页面时释放批量队列的缩略图 URL（保留此逻辑）
 onBeforeUnmount(() => {
+  if (toastTimer) clearTimeout(toastTimer)
   for (const item of queue.value) {
     if (item?.previewUrl) {
       URL.revokeObjectURL(item.previewUrl)
@@ -642,6 +896,107 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* 样式复用 media-detail-modal 和 media-browse 的样式 */
+
+/* 上传结果提示（小弹窗） */
+.upload-toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  min-width: 200px;
+  max-width: 90vw;
+}
+
+.upload-toast-success {
+  background: rgba(39, 174, 96, 0.95);
+  color: #fff;
+}
+
+.upload-toast-error {
+  background: rgba(231, 76, 60, 0.95);
+  color: #fff;
+}
+
+.upload-toast-message {
+  flex: 1;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.upload-toast-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.9;
+  padding: 0 4px;
+}
+
+.upload-toast-close:hover {
+  opacity: 1;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-12px);
+}
+
+/* 单文件（视频）上传进度 */
+.upload-progress-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 160px;
+}
+.upload-progress-bar-wrap {
+  width: 120px;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.upload-progress-bar {
+  height: 100%;
+  background: rgba(39, 174, 96, 0.9);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+.upload-progress-text {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* 批量上传队列行内进度条 */
+.queue-progress-bar-wrap {
+  margin-top: 4px;
+  width: 80px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.queue-progress-bar {
+  height: 100%;
+  background: rgba(39, 174, 96, 0.9);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
 
 /* 嵌入到“我的上传”页面时：去掉全屏页面感 */
 .media-browse-container.embedded {

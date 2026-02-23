@@ -231,6 +231,70 @@ export function auditReject(mediaIds = []) {
 }
 
 /**
+ * 准备上传媒体资源（两阶段上传 - 第一步）
+ *
+ * POST /api/media/upload
+ * Content-Type: multipart/form-data
+ *
+ * FormData 参数：
+ * - file_hash: string（必填，前端计算的文件哈希）
+ * - category: 0=图片，1=视频（必填）
+ * - title: string（可选）
+ * - description: string（可选）
+ * - filename: string（可选，原始文件名，用于推断扩展名）
+ *
+ * 返回：
+ * - code: 200
+ * - data: { mediaId, storagePath, uploadUrl, uploadUrlExpireSeconds }
+ */
+export function prepareUpload({ fileHash, category, title, description, filename }) {
+  const formData = new FormData()
+  formData.append('file_hash', fileHash)
+  formData.append('category', String(category))
+  if (title !== undefined && title !== null && title !== '') {
+    formData.append('title', title)
+  }
+  if (description !== undefined && description !== null && description !== '') {
+    formData.append('description', description)
+  }
+  if (filename) {
+    formData.append('filename', filename)
+  }
+  return api.post('/api/media/upload', formData)
+}
+
+/**
+ * 通知上传结果（两阶段上传 - 第二步）
+ *
+ * POST /api/media/upload/complete
+ * Content-Type: multipart/form-data
+ *
+ * FormData 参数：
+ * - mediaId: number（必填）
+ * - success: boolean（必填）
+ * - visibleUserIds: string（必填，JSON 数组字符串）
+ * - cover: File（success=true 时必填；success=false 可不传）
+ * - code: string（可选，失败时错误码）
+ * - message: string（可选，失败时错误描述）
+ */
+export function uploadComplete({ mediaId, success, visibleUserIds, cover, code, message }) {
+  const formData = new FormData()
+  formData.append('mediaId', String(mediaId))
+  formData.append('success', String(!!success))
+  formData.append('visibleUserIds', JSON.stringify(visibleUserIds || []))
+
+  if (success && cover) {
+    formData.append('cover', cover)
+  }
+  if (!success) {
+    if (code) formData.append('code', code)
+    if (message) formData.append('message', message)
+  }
+
+  return api.post('/api/media/upload/complete', formData)
+}
+
+/**
  * 上传媒体资源（图片/视频）- 单文件上传
  *
  * POST /api/media/upload
