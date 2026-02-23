@@ -75,9 +75,8 @@ dragons-zone/
 - **权限控制**: 支持树洞的可见性控制
 
 ### 后续优化功能（非MVP）
-- 缓存系统（Redis）
-- Go语言实现大文件分片上传
-- 断点续传功能
+- 缓存系统（Redis）✅ 已实现
+- 大文件分片上传（前端直连 OSS + STS，已实现；断点续传可在此基础上扩展）
 - 更多用户体验优化
 
 ## 数据库设计
@@ -150,7 +149,8 @@ dragons-zone/
 - [x] 迁移到阿里云 OSS（默认使用 OssStorageService；示例配置见 application-example.yml）
 
 #### 步骤3：媒体文件管理接口（部分完成）
-- [x] 文件上传接口（/api/media/upload）- 上传到对象存储（当前为 OSS），保存路径到数据库，支持可见权限控制；上传完成后状态为 `state=6`（待审核）
+- [x] 准备上传接口（POST /api/media/upload）- 两阶段上传：仅传 file_hash/category/title/description/filename，不传主文件与封面；落库 state=1，返回 mediaId、uploadUrl（预签名 PUT）、可选 stsCredentials（大文件分片用）；前端直连 OSS 后调通知结果接口
+- [x] 通知上传结果接口（POST /api/media/upload/complete）- 传 mediaId、success、visibleUserIds、cover（success 时）；后端校验 OSS 对象后更新 state、写 media_visible、上传封面；视频支持自动抽帧封面 + 默认封面保底，允许用户上传不带封面
 - [x] 媒体基础信息更新接口（PUT /api/media/{id}）- 仅更新 title/description（不改文件、不改封面、不改可见范围）；允许 `state=0/6/7` 更新；`state=7` 修改后自动重置为 `state=6` 需重新审核
 - [x] 视频封面更新接口（PUT /api/media/{id}/cover）- 独立操作：先上传对象存储，再更新 DB；DB 失败则补偿删除对象存储中的封面
 - [x] 媒体可见范围修复接口（PUT /api/media/{id}/visible）- 独立操作：仅更新 media_visible，方案C差量同步，事务保证原子性（visibleUserIds最多12个）
@@ -207,10 +207,11 @@ dragons-zone/
 - [ ] 安全性测试
 - [ ] 用户体验优化
 
-### 待实现（点赞与排行榜）
-- [ ] 点赞/取消点赞 MQ 消费者与 Redis 回滚（见 Redis_DESIGN.md：先 Redis → MQ → 事务落库，失败回滚 Redis）
-- [ ] 点赞相关前后端联调（点赞/取消点赞/是否已赞）
-- [ ] 前端热门排行榜界面
+### 点赞与排行榜（当前状态）
+- [x] 点赞相关前后端联调（点赞/取消点赞/是否已赞）
+- [x] 前端热门排行榜界面（NavBar 下拉「热门内容」）
+- **当前点赞方案**：先更新数据库再更新 Redis ZSET（简单方案，已启用）
+- **Redis+MQ 方案**：先 Redis → MQ → 事务落库、失败回滚 Redis（见 Redis_DESIGN.md）已实现但未启用，可按需切换
 
 ## API接口设计
 
@@ -731,6 +732,14 @@ mvn spring-boot:run
   - 数据库表 tree_hole_message_visible：message_id、owner_id（接收方）、shared_by_user_id（分享者）
 - ✅ 未登录找回密码（忘记密码）
   - POST /api/user/forgotPassword：permitAll，无需 JWT；请求体 loginName、phoneNumber、newPassword；通过登录名+手机号校验身份后修改密码，不依赖验证码；登录名或手机号不匹配时统一返回 4017「登录名与手机号不匹配」；SecurityConfig 已加入该路径 permitAll。
+
+### 2026-02-24
+- ✅ 上传逻辑优化（两阶段 + 前端直连 OSS）
+  - 准备上传：仅传 file_hash、category、title、description、filename，不传主文件与封面；后端落库 state=1，返回 mediaId、uploadUrl、可选 stsCredentials
+  - 前端直传 OSS：小文件用预签名 PUT；大文件（≥5MB）且具备 STS 时用 OSS SDK 分片上传，支持进度回调与界面展示
+  - 通知结果：直传成功后调 upload/complete，传 mediaId、success、visibleUserIds、cover；失败时也通知 success=false，避免列表一直“正在上传”
+- ✅ 视频封面策略
+  - 支持从视频自动抽取封面 + 默认封面保底；允许用户上传不带封面的视频（封面在通知结果时可选上传，未传则走抽帧或默认）
 
 ### 2026-02-13
 - ✅ 前端开发完成
