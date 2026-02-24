@@ -4,10 +4,12 @@ import com.dragons.core.dto.MediaLikeEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
  * 点赞/取消点赞事件 MQ 生产者（Producer）：负责把点赞/取消点赞事件发到 RocketMQ 的某个 Topic。
+ * 仅当 media.like.use-mq=true 时注册；否则使用 {@link MediaLikeEventSenderNoOp}，无需启动 RocketMQ。
  * 消息队列中，生产者只负责“发消息”，不关心谁处理；消费者在另一处订阅该 Topic 并处理。
  * 发送失败时由调用方（MediaServiceImpl）回滚 Redis，保证缓存与 DB 最终一致。
  *
@@ -16,7 +18,8 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-public class MediaLikeMqProducer {
+@ConditionalOnProperty(name = "media.like.use-mq", havingValue = "true")
+public class MediaLikeMqProducer implements MediaLikeEventSender {
 
     private final RocketMQTemplate rocketMQTemplate;
 
@@ -32,6 +35,7 @@ public class MediaLikeMqProducer {
      * 同步发送一条点赞事件到 MQ。
      * syncSend：发送后阻塞等待 Broker 确认，失败会抛异常，便于调用方立刻回滚 Redis。
      */
+    @Override
     public void send(MediaLikeEvent event) {
         if (event == null || event.getOperation() == null || event.getMediaId() == null || event.getUserId() == null) {
             throw new IllegalArgumentException("MediaLikeEvent incomplete");

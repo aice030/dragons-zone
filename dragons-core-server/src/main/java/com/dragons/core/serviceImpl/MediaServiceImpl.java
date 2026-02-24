@@ -16,7 +16,7 @@ import com.dragons.core.service.IMediaVisibleService;
 import com.dragons.core.service.MediaLikePersistService;
 import com.dragons.core.service.OssStsService;
 import com.dragons.core.service.IUserService;
-import com.dragons.core.mq.MediaLikeMqProducer;
+import com.dragons.core.mq.MediaLikeEventSender;
 import com.dragons.core.storage.StorageService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -64,7 +64,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final RedisCacheMediaListService redisCacheMediaListService;
     private final RedisCacheMediaLikeService redisCacheMediaLikeService;
     private final MediaLikePersistService mediaLikePersistService;
-    private final MediaLikeMqProducer mediaLikeMqProducer;
+    private final MediaLikeEventSender mediaLikeEventSender;
     private final OssStsService ossStsService;
 
     /**
@@ -100,7 +100,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                             RedisCacheMediaListService redisCacheMediaListService,
                             RedisCacheMediaLikeService redisCacheMediaLikeService,
                             MediaLikePersistService mediaLikePersistService,
-                            MediaLikeMqProducer mediaLikeMqProducer,
+                            MediaLikeEventSender mediaLikeEventSender,
                             OssStsService ossStsService) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
@@ -109,7 +109,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         this.redisCacheMediaListService = redisCacheMediaListService;
         this.redisCacheMediaLikeService = redisCacheMediaLikeService;
         this.mediaLikePersistService = mediaLikePersistService;
-        this.mediaLikeMqProducer = mediaLikeMqProducer;
+        this.mediaLikeEventSender = mediaLikeEventSender;
         this.ossStsService = ossStsService;
     }
 
@@ -1032,7 +1032,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             return;
         }
         try {
-            mediaLikeMqProducer.send(new MediaLikeEvent(MediaLikeEvent.Operation.LIKE, mediaId, currentUserId, category));
+            mediaLikeEventSender.send(new MediaLikeEvent(MediaLikeEvent.Operation.LIKE, mediaId, currentUserId, category));
         } catch (Exception e) {
             log.error("like: MQ send failed, rolling back Redis mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
             redisCacheMediaLikeService.rollbackLike(mediaId, currentUserId, category);
@@ -1059,7 +1059,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             return;
         }
         try {
-            mediaLikeMqProducer.send(new MediaLikeEvent(MediaLikeEvent.Operation.UNLIKE, mediaId, currentUserId, category));
+            mediaLikeEventSender.send(new MediaLikeEvent(MediaLikeEvent.Operation.UNLIKE, mediaId, currentUserId, category));
         } catch (Exception e) {
             log.error("unlike: MQ send failed, rolling back Redis mediaId={} userId={} error={}", mediaId, currentUserId, e.getMessage());
             redisCacheMediaLikeService.rollbackUnlike(mediaId, currentUserId, category);
