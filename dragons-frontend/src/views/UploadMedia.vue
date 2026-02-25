@@ -159,6 +159,7 @@
           <!-- 视频：文件选择 -->
           <div v-else class="upload-media-field">
             <label class="upload-media-field-label">选择视频</label>
+            <p class="upload-media-field-desc">文件大小不要超过 2GB。</p>
             <div class="file-select-wrapper">
               <input
                 ref="fileInputRef"
@@ -322,6 +323,8 @@ import { uploadFileToOss, uploadFileToOssMultipart } from '@/utils/ossUpload'
 
 /** 超过此大小且后端返回了 stsCredentials 时走分块上传（5MB） */
 const CHUNK_UPLOAD_THRESHOLD = 5 * 1024 * 1024
+/** 单个视频最大 2GB */
+const MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024
 
 const props = defineProps({
   embedded: {
@@ -413,6 +416,18 @@ function handleFileSelect(event) {
       fileError.value = '当前是上传视频，请选择视频文件'
       return
     }
+  }
+
+  // 视频大小限制：不得超过 2GB
+  if (contentMode.value === 'video' && file.size > MAX_VIDEO_SIZE) {
+    const msg = '文件过大，上传失败'
+    fileError.value = msg
+    selectedFile.value = null
+    if (event?.target) {
+      event.target.value = ''
+    }
+    showToast(msg, 'error')
+    return
   }
 
   selectedFile.value = file
@@ -692,6 +707,14 @@ async function handleSubmit() {
   // 验证
   if (!selectedFile.value) {
     fileError.value = '请选择视频文件'
+    return
+  }
+
+  // 再次校验视频大小上限，防止绕过前端选择校验
+  if (contentMode.value === 'video' && selectedFile.value.size > MAX_VIDEO_SIZE) {
+    const msg = '文件过大，上传失败'
+    fileError.value = msg
+    showToast(msg, 'error')
     return
   }
 
