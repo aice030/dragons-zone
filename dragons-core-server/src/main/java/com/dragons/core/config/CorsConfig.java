@@ -22,8 +22,13 @@ public class CorsConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         CorsConfiguration config = new CorsConfiguration();
         
-        // 允许的源（前端地址）
+        // 允许的源（前端地址）：
+        // - 本地开发 Vite(5173)
+        // - 本机 Docker Nginx(8081)
+        // - 云服务器前端：39.105.137.42:8081
         config.addAllowedOrigin("http://localhost:5173");
+        config.addAllowedOrigin("http://localhost:8081");
+        config.addAllowedOrigin("http://39.105.137.42:8081");
         
         // 允许的请求头
         config.addAllowedHeader("*");
