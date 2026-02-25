@@ -696,7 +696,7 @@ Content-Type: multipart/form-data
 
 ### POST /api/media/upload/complete
 
-**功能说明**：前端在直传 OSS 成功或失败后调用此接口；后端先校验 OSS 上该对象是否真实存在（成功时），再按成功/失败执行后续逻辑。**success=true 时**需上传封面：后端校验 cover 文件类型合规后计算 coverPath、落库 coverPath、再将 cover 上传到 OSS。
+**功能说明**：前端在直传 OSS 成功或失败后调用此接口；后端先校验 OSS 上该对象是否真实存在（成功时），再按成功/失败执行后续逻辑。**封面（cover）可不填**。上传视频且不填 cover 时：由前端抽取第一帧作为封面；若抽取失败则使用 OSS 中的默认封面路径；若 OSS 访问失败则降级使用本地存储的默认封面路径。若传了 cover，后端校验文件类型合规后计算 coverPath、落库并上传到 OSS。
 
 **请求头**：
 ```
@@ -710,7 +710,7 @@ Content-Type: multipart/form-data
 | mediaId | Long | 是 | 准备上传时返回的 Media 主键 |
 | success | Boolean | 是 | true=上传成功，false=上传失败 |
 | visibleUserIds | String | 是 | JSON数组字符串，例如 `[1,2,3]` 或 `[]`（必填，但可以为空数组）；success=true 时用于写 media_visible |
-| cover | File（二进制） | 是（success=true 时必填） | 封面图片文件；success=true 时后端校验类型合规后计算 coverPath、落库并上传到 OSS，success=false 时可不传 |
+| cover | File（二进制） | 否 | 封面图片文件；可不传。success=true 时若传了则后端校验类型合规后计算 coverPath、落库并上传到 OSS；视频不传时由前端抽第一帧或使用默认封面（见功能说明），success=false 时可不传 |
 | code | String | 否 | 失败时的错误码，便于日志 |
 | message | String | 否 | 失败时的描述，便于排查 |
 
@@ -732,7 +732,7 @@ Content-Type: multipart/form-data
 3. **success = true**：
    - **先校验 OSS**：根据 media 的 storagePath 检查 OSS 上该对象是否存在（如 HEAD 或 GET 元数据），**不存在则视为失败**，将 state 置为 3，不执行后续写库
    - 校验通过后：将 media.state 更新为 2（上传成功）；写 media_visible（与现有规则一致）
-   - **封面处理**：校验 cover 文件类型合规（仅允许图片格式），计算 coverPath（如 `images/covers/yyyy/MM/dd/{uuid}.{ext}`），将 coverPath 落库到 media，再将 cover 文件上传到 OSS；封面上传失败不影响主流程（可选降级）
+   - **封面处理**：cover 可不填。图片未传 cover 时主文件即封面；视频未传 cover 时由前端抽取第一帧作为封面，抽取失败则用 OSS 默认封面路径，OSS 访问失败则降级用本地默认封面路径。若传了 cover，校验文件类型合规（仅允许图片格式），计算 coverPath（如 `images/covers/yyyy/MM/dd/{uuid}.{ext}`），将 coverPath 落库到 media，再将 cover 上传到 OSS；封面上传失败不影响主流程（可选降级）
    - 将 state 更新为 6（待审核）；失效缓存等
 4. **success = false**：将 media.state 置为 3（上传失败）；若 OSS 上已有该对象可择机清理
 5. 成功/失败逻辑与现有「上传成功」「上传失败」处理一致（media_visible、封面、缓存等）
@@ -893,7 +893,7 @@ Content-Type: application/x-www-form-urlencoded
 
 ### GET /api/media/{id}/download
 
-**功能说明**：获取媒体资源的预签名下载URL（2小时有效）。支持游客模式，无需请求头。
+**功能说明**：获取媒体资源的预签名下载URL（有效期 5 分钟）。支持游客模式，无需请求头。
 
 **访问规则（补充：审核预览）**：
 - **游客 / 未登录**：仅允许获取 `state=0`（已审核通过）的媒体下载/播放 URL
@@ -911,7 +911,7 @@ Content-Type: application/x-www-form-urlencoded
   "code": 200,
   "message": "获取成功",
   "data": {
-    "downloadUrl": "http://localhost:9000/dragons-media/images/2026/01/21/abc123.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
+    "downloadUrl": "http://localhost:9000/dragons-media/images/2026/01/21/abc123.jpg?X-Amz-Algorithm=...&X-Amz-Expires=300&..."
   },
   "timestamp": 1705564800000
 }
@@ -935,7 +935,7 @@ Content-Type: application/x-www-form-urlencoded
    - 上传者本人：`state=0/6/7`
    - 作者/管理员：`state=0/6/7`（审核预览）
 3. 检查MinIO中文件是否实际存在（防止缓存不一致）
-4. 生成预签名URL（有效期2小时，7200秒）
+4. 生成预签名URL（有效期 5 分钟，300 秒）
 5. 返回URL给前端，前端可重定向下载
 
 **注意**：
@@ -991,20 +991,20 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**业务逻辑**（软删除，不物理删除 media 表行）：
+**业务逻辑**（物理删除 media 表行）：
 1. 从JWT Token获取当前用户ID
 2. 查询 media 记录并校验所有权（media.uploader_id 与当前用户ID一致）
 3. 如果无权限或资源不存在，返回404（不暴露资源是否存在）
 4. 将 media.state 置为 4（正在删除）并写库（若已为 state=4，允许重复调用该接口继续收尾）
 5. 删除 media_visible 记录（where media_id = ?；若本就不存在记录，视为幂等成功）
 6. 删除 MinIO 中的主文件与封面（若与主文件路径不同）
-7. 将 media.state 置为 5（已删除）并写库
+7. 删除相关缓存后，物理删除 media 表记录（DELETE）
 
 **注意**：
-- 仅允许上传者本人删除（通过 JWT 中的 userId 校验）
-- media 表行为软删除（state 4→5），不执行物理 DELETE
-- MinIO 删除在删除 media_visible 之后、state 置 5 之前执行；若 MinIO 删除失败，不影响业务正确性（最多遗留垃圾文件）
-- **删除接口幂等**：若某次删除执行到一半失败导致 state=4，可再次调用删除接口继续清理 media_visible/MinIO 并将 state 置为 5
+- 仅允许上传者本人删除（通过 JWT 中的 userId 校验）；作者/管理员（level=0/1）也可删除
+- media 表行为**物理删除**：先 state=4，删 media_visible 与 MinIO，再执行物理 DELETE 删除 media 行
+- MinIO 删除在删除 media_visible 之后、物理删除 media 之前执行；若 MinIO 删除失败，不影响业务正确性（最多遗留垃圾文件）
+- **删除接口幂等**：若某次删除执行到一半失败导致 state=4，可再次调用删除接口继续清理 media_visible/MinIO 并完成物理删除
 
 ---
 
@@ -1166,7 +1166,7 @@ Authorization: Bearer <JWT_TOKEN>
 **业务逻辑**：
 1. 从 JWT 获取当前用户ID（上传者ID）
 2. 查询 `media`：`uploader_id = 当前用户ID` 且 `state != 5`（排除已删除状态，显示包括 `state=0`正常、`state=6`待审核、`state=7`审核未通过等所有状态）
-3. 按创建时间倒序分页返回
+3. 按 updateTime、id 倒序分页返回
 
 ---
 
@@ -1416,13 +1416,13 @@ Authorization: Bearer <JWT_TOKEN>
 1. 校验JWT并获取当前用户ID
 2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
 3. 查询 `state=6`（待审核）的媒体列表
-4. 按创建时间倒序分页返回
+4. 按 updateTime、id 倒序分页返回
 
 ---
 
 ## 12. 点赞与排行榜接口
 
-按 Redis_DESIGN.md 排行榜设计：点赞/取消点赞先改 Redis（Lua 更新 ZSET+位图）→ 发 MQ → 消费者事务落库 media.like_count 与 user_like_record，失败则回滚 Redis；排行榜读 Redis 取 Top N。
+**当前实现**：点赞/取消点赞采用「先 DB 再 Redis」已启用；Redis+MQ 方案（先 Redis → 发 MQ → 消费者事务落库，失败则回滚 Redis）已实现未启用。详见 Redis_DESIGN.md 与 development.md。排行榜读 Redis 取 Top N。
 
 ### 12.1 点赞接口
 
@@ -1459,8 +1459,8 @@ Authorization: Bearer <JWT_TOKEN>
 1. 校验 JWT 并获取当前用户 ID
 2. 校验媒体存在且 state=0（仅已审核通过的媒体可被点赞）
 3. 若需防重复：检查当前用户是否已对该媒体点赞，已赞则幂等返回成功或返回“已点赞”
-4. 更新 Redis：对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY 1（Lua 双 key 原子）
-5. 可选：落库“用户-媒体”点赞关系（用于防重复、取消点赞时校验）；若仅用 Redis 记录，需在 Redis 中维护“用户已赞集合”等
+4. **当前方案**：先落库“用户-媒体”点赞关系与 media.like_count，再更新 Redis（对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY 1，Lua 双 key 原子）
+5. Redis+MQ 方案（先 Redis 再 MQ 落库）已实现未启用，可按需切换
 
 ---
 
@@ -1496,7 +1496,7 @@ Authorization: Bearer <JWT_TOKEN>
 1. 校验 JWT 并获取当前用户 ID
 2. 校验媒体存在且 state=0
 3. 若存在“用户-媒体”点赞关系则删除；若从未点赞则幂等返回成功
-4. 更新 Redis：仅当当前 score > 0 时对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY -1（Lua 原子，保证不为负）
+4. **当前方案**：先落库删除点赞关系并更新 media.like_count，再更新 Redis（仅当当前 score > 0 时对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY -1，Lua 原子，保证不为负）。Redis+MQ 方案已实现未启用
 
 ---
 
@@ -1529,7 +1529,7 @@ Authorization: Bearer <JWT_TOKEN>
 **业务逻辑**：
 1. 校验 JWT 并获取当前用户 ID
 2. 校验媒体存在且 state=0（仅已审核通过的媒体可查已赞状态）
-3. **查询流程**：只查 Redis bitmap `media:liked:{mediaId}`（GETBIT userId），位为 1 返回已赞；为 0 或 key 不存在视为未赞返回 false。点赞/取消点赞已先写 Redis 再 MQ 同步 DB，以 Redis 为准，不查 DB、不写回
+3. **查询流程**：只查 Redis bitmap `media:liked:{mediaId}`（GETBIT userId），位为 1 返回已赞；为 0 或 key 不存在视为未赞返回 false。当前点赞/取消点赞为先写 DB 再写 Redis，以 Redis 为准，不查 DB、不写回
 
 ---
 
@@ -2012,8 +2012,8 @@ Content-Type: application/json
 - 确定接口路径规范：`/api/media/...`
 - 确定文件格式支持：图片（jpg, jpeg, png, gif, webp, bmp）和视频（mp4, mov, avi, mkv, flv, wmv）
 - 确定可见权限规则：上传者本人 + 公共区（可选） + 管理员列表
-- 确定下载机制：预签名URL（2小时有效）
-- 确定删除机制：仅上传者本人可删除；软删除 state=4→5；支持 state=4 时重复调用用于收尾清理（media_visible/MinIO）
+- 确定下载机制：预签名URL（5分钟有效）
+- 确定删除机制：仅上传者本人可删除（作者/管理员也可删）；物理删除：先 state=4，删 media_visible 与 MinIO，再物理 DELETE media 行；支持 state=4 时重复调用用于收尾
 
 ### 2026-01-31
 - 新增媒体列表接口：`GET /api/mediaVisible/list`（支持按专区 `currentUserId` 筛选）

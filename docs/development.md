@@ -150,21 +150,21 @@ dragons-zone/
 
 #### 步骤3：媒体文件管理接口（部分完成）
 - [x] 准备上传接口（POST /api/media/upload）- 两阶段上传：仅传 file_hash/category/title/description/filename，不传主文件与封面；落库 state=1，返回 mediaId、uploadUrl（预签名 PUT）、可选 stsCredentials（大文件分片用）；前端直连 OSS 后调通知结果接口
-- [x] 通知上传结果接口（POST /api/media/upload/complete）- 传 mediaId、success、visibleUserIds、cover（success 时）；后端校验 OSS 对象后更新 state、写 media_visible、上传封面；视频支持自动抽帧封面 + 默认封面保底，允许用户上传不带封面
+- [x] 通知上传结果接口（POST /api/media/upload/complete）- 传 mediaId、success、visibleUserIds、cover（可选）；后端校验 OSS 对象后更新 state、写 media_visible、上传封面；cover 可不填，上传视频不填时由前端抽取第一帧作为封面，抽取失败用 OSS 默认封面路径，OSS 访问失败降级用本地默认封面路径
 - [x] 媒体基础信息更新接口（PUT /api/media/{id}）- 仅更新 title/description（不改文件、不改封面、不改可见范围）；允许 `state=0/6/7` 更新；`state=7` 修改后自动重置为 `state=6` 需重新审核
 - [x] 视频封面更新接口（PUT /api/media/{id}/cover）- 独立操作：先上传对象存储，再更新 DB；DB 失败则补偿删除对象存储中的封面
 - [x] 媒体可见范围修复接口（PUT /api/media/{id}/visible）- 独立操作：仅更新 media_visible，方案C差量同步，事务保证原子性（visibleUserIds最多12个）
 - [x] 文件列表查询接口（/api/mediaVisible/list）- 支持按专区 `currentUserId` 筛选（0=公共区，成员ID=成员专区）；仅显示 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
 - [x] 我的上传列表接口（/api/mediaVisible/my/list）- 上传者本人管理自己的上传内容（直接查 media.uploader_id）；显示所有状态（排除 `state=5` 已删除），包括待审核和审核未通过状态
 - [x] 文件详情查询接口（/api/media/{id}）- 详情不依赖专区参数；仅显示 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
-- [x] 文件下载接口（/api/media/{id}/download）- 返回对象存储预签名 URL（当前为 OSS，2 小时有效）；仅允许下载 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
-- [x] 文件删除接口（/api/media/{id}/delete）- 仅上传者可删除；软删除：media.state→4，删 media_visible，删对象存储中的文件，media.state→5
+- [x] 文件下载接口（/api/media/{id}/download）- 返回对象存储预签名 URL（当前为 OSS，5 分钟有效）；仅允许下载 `state=0`（已审核通过）的媒体；**游客模式**，无需登录/请求头
+- [x] 文件删除接口（/api/media/{id}/delete）- 仅上传者可删除（作者/管理员也可删）；物理删除：media.state→4，删 media_visible，删对象存储中的文件，再物理删除 media 表记录
 - [x] 媒体审核通过接口（POST /api/media/audit/approve）- 批量审核通过，将 `state=6`（待审核）改为 `state=0`（正常）；仅管理员或作者可操作；非事务性，返回失败项列表
 - [x] 媒体审核驳回接口（POST /api/media/audit/reject）- 批量审核驳回，将 `state=6`（待审核）改为 `state=7`（审核未通过）；仅管理员或作者可操作；非事务性，返回失败项列表
-- [x] 待审核媒体列表接口（GET /api/media/audit/pending）- 分页查询 `state=6`（待审核）的媒体列表；仅管理员或作者可访问
+- [x] 待审核媒体列表接口（GET /api/media/audit/pending）- 分页查询 `state=6`（待审核）的媒体列表，按 updateTime、id 倒序；仅管理员或作者可访问
 - [x] 查询媒体所属成员专区接口（GET /api/mediaVisible/{mediaId}/zones）- 根据媒体ID查询该媒体属于哪些成员专区；返回成员专区ID列表；**游客模式**，无需登录/请求头
-- [x] 点赞接口（POST /api/media/{id}/like）- 需登录；仅 state=0 可点赞；先 Redis Lua 更新 ZSET+位图，再发 MQ，消费者事务落库 media.like_count 与 user_like_record，失败则回滚 Redis
-- [x] 取消点赞接口（POST /api/media/{id}/unlike）- 需登录；先 Redis Lua 更新 ZSET+位图，再发 MQ，消费者事务落库，失败则回滚 Redis
+- [x] 点赞接口（POST /api/media/{id}/like）- 需登录；仅 state=0 可点赞；当前为「先 DB 再 Redis」已启用，Redis+MQ 方案已实现未启用
+- [x] 取消点赞接口（POST /api/media/{id}/unlike）- 需登录；当前为「先 DB 再 Redis」已启用，Redis+MQ 方案已实现未启用
 - [x] 查询是否已赞接口（GET /api/userLikeRecord/media/{mediaId}/status）- 需登录；只查 Redis bitmap，以 Redis 为准，未命中视为未赞，返回 true/false
 - [x] 热门排行榜接口（GET /api/mediaVisible/rank）- 游客可访问；按点赞数 Top N，返回 HotListItem 列表（id、category、title、description、coverUrl、likeCount）；category 筛选，size 默认 20 最大 100；不做分页、不做专区
 
@@ -515,7 +515,7 @@ dragons-zone/
 ```
 
 #### GET /api/media/{id}/download
-获取媒体文件下载 URL（对象存储预签名 URL，当前为 OSS，2 小时有效）（**游客模式**：无需登录，无需请求头）✅
+获取媒体文件下载 URL（对象存储预签名 URL，当前为 OSS，5 分钟有效）（**游客模式**：无需登录，无需请求头）✅
 
 **响应示例**:
 ```json
@@ -532,7 +532,7 @@ dragons-zone/
 **注意**: 下载前会检查数据库记录和对象存储中文件是否存在，防止缓存不一致问题
 
 #### DELETE /api/media/{id}/delete
-删除媒体文件（仅上传者本人可删除）✅
+删除媒体文件（仅上传者本人可删除；作者/管理员也可删）✅
 
 **请求头**: `Authorization: Bearer <JWT_TOKEN>`
 
@@ -546,13 +546,13 @@ dragons-zone/
 }
 ```
 
-**业务逻辑**（软删除）:
-1. 校验所有权（media.uploader_id 与当前用户一致）
+**业务逻辑**（物理删除）:
+1. 校验所有权（media.uploader_id 与当前用户一致，或当前用户为作者/管理员）
 2. 将 media.state 置为 4（正在删除）并写库
 3. 删除 media_visible 记录（若本就不存在记录，视为幂等成功）
 4. 删除对象存储中的主文件与封面（若路径不同）
-5. 将 media.state 置为 5（已删除）并写库
-说明：若某次删除执行到一半失败导致 state=4，可再次调用删除接口继续清理 media_visible 与对象存储并将 state 置为 5（接口幂等收尾）。
+5. 删除相关缓存后，物理删除 media 表记录（DELETE）
+说明：若某次删除执行到一半失败导致 state=4，可再次调用删除接口继续清理 media_visible 与对象存储并完成物理删除（接口幂等收尾）。
 
 ### 树洞相关接口
 
@@ -703,7 +703,7 @@ mvn spring-boot:run
   - 配置MinIO连接（本地开发环境）
 - ✅ 完成媒体服务核心接口
   - POST /api/media/upload（上传，支持可见权限控制）
-  - GET /api/media/{id}/download（下载，预签名URL，2小时有效）
+  - GET /api/media/{id}/download（下载，预签名URL，5分钟有效）
   - DELETE /api/media/{id}/delete（删除，仅上传者可删；软删除：state→4，删 media_visible，删 MinIO，state→5）
 - ✅ 实现媒体可见权限控制
   - 通过 `media_visible` 表控制“展示在哪个专区”
