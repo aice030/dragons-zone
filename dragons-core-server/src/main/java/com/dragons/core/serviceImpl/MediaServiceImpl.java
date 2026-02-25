@@ -161,6 +161,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         media.setStoragePath(objectName);
         media.setCoverPath(null);
         media.setState((byte) 1);
+        // 创建 media 记录时封面状态置为 0（未上传）。封面要到 uploadComplete 中才会上传
+        media.setCoverStatus((byte) 0);
         media.setUpdateTime(LocalDateTime.now());
         media.setLikeCount(0L);
         media.setLikeCountUpdateTime(LocalDateTime.now());
@@ -297,23 +299,35 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
 
-        // 落库 coverPath（可为 null，如视频未传封面时）
+        // 落库 coverPath，设置 coverStatus（注意：此处设置的是 coverStatus，不要误改 media.state）
+        // 若更新失败仅打日志不抛异常，保证后续 media_visible、state=6 仍能执行，避免主流程已成功却因封面元数据写库失败导致整次上传报错
         if (coverPath != null) {
             media.setCoverPath(coverPath);
             media.setUpdateTime(LocalDateTime.now());
+            if (category == 0) {
+                // 图片：主文件即封面，无需单独上传，coverStatus=2（上传成功）
+                media.setCoverStatus((byte) 2);
+            } else if (category == 1) {
+                // 视频：若需单独上传用户封面则先置 coverStatus=1（正在上传），否则已是默认封面 coverStatus=2
+                media.setCoverStatus(needUploadCover ? (byte) 1 : (byte) 2);
+            }
             if (!updateWithRetry(media)) {
-                log.error("uploadComplete: update coverPath failed mediaId={}", mediaId);
-                throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
+                log.error("uploadComplete: update coverPath/coverStatus failed mediaId={}, continuing to media_visible and state=6", mediaId);
             }
         }
 
-        // 如果上传的是视频，且未上传封面，需单独上传封面到 OSS（用户上传的封面或截取的第一帧）
+        // 视频且传了封面：上传到 OSS 后把 coverStatus 置为 2（上传成功）
         if (needUploadCover && coverBytes != null && coverContentType != null) {
             try {
                 storageService.upload(coverBytes, coverContentType, coverPath);
+                media.setCoverStatus((byte) 2);
+                media.setUpdateTime(LocalDateTime.now());
+                if (!updateWithRetry(media)) {
+                    log.warn("uploadComplete: update coverStatus to 2 failed mediaId={}", mediaId);
+                }
             } catch (Exception e) {
                 log.warn("uploadComplete: cover upload to OSS failed mediaId={} coverPath={}", mediaId, coverPath, e);
-                // 封面上传失败不阻断主流程，与现有约定一致
+                // 封面上传失败不阻断主流程，coverStatus 保持 1（正在上传）或可后续置为 3（上传失败），与现有约定一致
             }
         }
 
@@ -791,6 +805,9 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
 
+        // 上传前记录旧封面 path，成功后若非默认封面则从 OSS 删除，防止孤儿资源
+        final String oldCoverPath = media.getCoverPath();
+
         String coverPath = buildCoverObjectName(cover.getOriginalFilename());
         byte[] coverBytes;
         try {
@@ -808,6 +825,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
 
         // 2) 再更新 DB；若失败则删除刚上传的封面做补偿，并返回封面上传失败
         media.setCoverPath(coverPath);
+        media.setCoverStatus((byte) 2); // 封面上传成功
         media.setUpdateTime(LocalDateTime.now());
         // 修改封面后回到 state=6（待审核），需要重新审核
         media.setState((byte) 6);
@@ -819,6 +837,17 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             } catch (Exception ignored) {
             }
             throw new BusinessException(ResponseCode.FILE_UPLOAD_FAILED);
+        }
+
+        // 2.5) 删除旧封面，防止 OSS 孤儿资源（仅当旧封面非预设默认封面时删除）
+        if (oldCoverPath != null && !oldCoverPath.trim().isEmpty()
+                && !DEFAULT_COVER_OBJECT_NAME.equals(oldCoverPath.trim())) {
+            try {
+                storageService.delete(oldCoverPath);
+                log.info("updateCover deleted old cover mediaId={} oldPath={}", mediaId, oldCoverPath);
+            } catch (Exception e) {
+                log.warn("updateCover delete old cover failed mediaId={} oldPath={}", mediaId, oldCoverPath, e);
+            }
         }
 
         // 3) 返回封面路径，并尽力返回封面预签名URL（用于前端立即刷新预览）
@@ -1623,13 +1652,13 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         listWrapper.last("limit " + offset + "," + safeSize);
         List<Media> records = this.list(listWrapper);
 
-        // 转换为返回结构
+        // 转换为返回结构（仅 coverStatus=2 或 null 时生成封面 URL）
         List<IMediaVisibleService.MediaListItem> list = new ArrayList<>();
         if (records != null) {
             for (Media m : records) {
                 String coverPath = m.getCoverPath();
                 String coverUrl = null;
-                if (coverPath != null && !coverPath.trim().isEmpty()) {
+                if (isCoverReadyForUrl(m) && coverPath != null && !coverPath.trim().isEmpty()) {
                     try {
                         if (storageService.exists(coverPath)) {
                             coverUrl = storageService.getPresignedUrl(coverPath, COVER_URL_TTL_SECONDS);
@@ -1660,8 +1689,16 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     }
 
     /**
+     * 仅当封面已就绪（coverStatus=2 或未设置，兼容旧数据）时才生成/使用封面 URL，避免对「正在上传」「上传失败」的封面发起 OSS 请求或展示无效 URL。
+     */
+    private static boolean isCoverReadyForUrl(Media media) {
+        Byte cs = media != null ? media.getCoverStatus() : null;
+        return cs == null || cs == 2;
+    }
+
+    /**
      * 将 Media 实体转换为 MediaDetailResult
-     * 处理 coverUrl：优先使用缓存中的值，如果不存在则重新生成
+     * 处理 coverUrl：仅当封面就绪（coverStatus=2 或 null）时生成；优先使用缓存中的值。
      *
      * @param media Media 实体
      * @return MediaDetailResult
@@ -1670,16 +1707,18 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (media == null) {
             return null;
         }
-        // 优先使用缓存中的 coverUrl，如果不存在则重新生成
-        String coverUrl = media.getCoverUrl();
-        if (coverUrl == null || coverUrl.trim().isEmpty()) {
-            String coverPath = media.getCoverPath();
-            if (coverPath != null && !coverPath.trim().isEmpty()) {
-                try {
-                    if (storageService.exists(coverPath)) {
-                        coverUrl = storageService.getPresignedUrl(coverPath, COVER_URL_TTL_SECONDS);
+        String coverUrl = null;
+        if (isCoverReadyForUrl(media)) {
+            coverUrl = media.getCoverUrl();
+            if (coverUrl == null || coverUrl.trim().isEmpty()) {
+                String coverPath = media.getCoverPath();
+                if (coverPath != null && !coverPath.trim().isEmpty()) {
+                    try {
+                        if (storageService.exists(coverPath)) {
+                            coverUrl = storageService.getPresignedUrl(coverPath, COVER_URL_TTL_SECONDS);
+                        }
+                    } catch (Exception ignored) {
                     }
-                } catch (Exception ignored) {
                 }
             }
         }

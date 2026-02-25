@@ -490,6 +490,12 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
     }
 
+    /** 仅当封面已就绪（coverStatus=2 或未设置）时才生成封面 URL，与 MediaServiceImpl 一致。 */
+    private static boolean isCoverReadyForUrl(Media m) {
+        Byte cs = m != null ? m.getCoverStatus() : null;
+        return cs == null || cs == 2;
+    }
+
     /**
      * 构建 MediaPageResult 返回结果
      */
@@ -499,10 +505,12 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         if (records != null) {
             for (Media m : records) {
                 String coverPath = m.getCoverPath();
-                // 优先使用缓存中的 coverUrl，如果不存在则重新生成
-                String coverUrl = m.getCoverUrl();
-                if (coverUrl == null || coverUrl.trim().isEmpty()) {
-                    coverUrl = buildCoverPresignedUrl(coverPath);
+                String coverUrl = null;
+                if (isCoverReadyForUrl(m)) {
+                    coverUrl = m.getCoverUrl();
+                    if (coverUrl == null || coverUrl.trim().isEmpty()) {
+                        coverUrl = buildCoverPresignedUrl(coverPath);
+                    }
                 }
                 list.add(new MediaListItem(
                         m.getId(),
@@ -570,8 +578,11 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                     m.getCoverPath(),
                     m.getUpdateTime()
             );
-            String coverUrl = (m.getCoverUrl() != null && !m.getCoverUrl().trim().isEmpty())
-                    ? m.getCoverUrl() : buildCoverPresignedUrl(m.getCoverPath());
+            String coverUrl = null;
+            if (isCoverReadyForUrl(m)) {
+                coverUrl = (m.getCoverUrl() != null && !m.getCoverUrl().trim().isEmpty())
+                        ? m.getCoverUrl() : buildCoverPresignedUrl(m.getCoverPath());
+            }
             item.coverUrl = coverUrl;
             list.add(item);
         }
@@ -641,8 +652,11 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             if (m == null || m.getState() == null || m.getState() != 0) {
                 continue;
             }
-            String coverUrl = (m.getCoverUrl() != null && !m.getCoverUrl().trim().isEmpty())
-                    ? m.getCoverUrl() : buildCoverPresignedUrl(m.getCoverPath());
+            String coverUrl = null;
+            if (isCoverReadyForUrl(m)) {
+                coverUrl = (m.getCoverUrl() != null && !m.getCoverUrl().trim().isEmpty())
+                        ? m.getCoverUrl() : buildCoverPresignedUrl(m.getCoverPath());
+            }
             Long likeCount = mediaIdToLikeCount.getOrDefault(mediaId, 0L);
             result.add(new HotListItem(
                     m.getId(),

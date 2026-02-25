@@ -84,6 +84,7 @@ public class RedisCacheMediaCoreServiceImpl implements RedisCacheMediaCoreServic
         copy.setDescription(source.getDescription());
         copy.setStoragePath(source.getStoragePath());
         copy.setCoverPath(source.getCoverPath());
+        copy.setCoverStatus(source.getCoverStatus());
         copy.setState(source.getState());
         copy.setUpdateTime(source.getUpdateTime());
         copy.setCoverUrl(source.getCoverUrl());
