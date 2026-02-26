@@ -825,13 +825,13 @@ async function startBatchUpload() {
     item.errorMsg = ''
     item.progress = 0
 
+    let mediaId = null
     try {
       const file = item.file
       const category = 0
 
       // 第一步：计算文件 hash 并调用“准备上传”接口
       const fileHash = await computeFileHash(file)
-      let mediaId = null
 
       const prepareRes = await prepareUpload({
         fileHash,
@@ -880,6 +880,7 @@ async function startBatchUpload() {
       item.status = 'success'
       item.mediaId = mediaId
     } catch (err) {
+      console.error('批量上传失败:', err)
       if (mediaId != null) {
         try {
           await uploadComplete({ mediaId, success: false, visibleUserIds: [] })
