@@ -1,4 +1,4 @@
-# dragons-frontend 速查（核心目录 & 界面说明）
+# 前端核心目录和界面说明
 
 ## 核心目录（`dragons-frontend/src`）
 
@@ -65,12 +65,12 @@
 
 ### 页面结构（两个列表 Tab）
 
-- **待审核列表**（仅作者/管理员）
+- **待审核列表**
   - 调用：`GET /api/media/audit/pending`
   - 操作：单条 **通过** / **驳回**
     - `POST /api/media/audit/approve`
     - `POST /api/media/audit/reject`
-- **已上传列表**（公共区已审核通过内容，state=0）
+- **已上传列表**（公共区已审核通过，state=0）
   - 调用：`GET /api/mediaVisible/list`（`currentUserId=0`）
   - 支持按类型筛选：全部 / 图片 / 视频
   - 支持打开 `MediaDetailModal` 查看详情
@@ -124,13 +124,11 @@
 
 ### 树洞消息展示说明（MemberTreeHoleSection）
 
-- **树洞主人**：列表仅显示根留言（`rootMessageId` 为 null），每条显示发送者、内容、状态（未读/已读/已回复）；筛选 3 项：全部 / 未读（state=0）/ 已读（state=1 或 3）；可点击「关闭树洞」/「开放树洞」切换树洞状态（均需二次确认）；在消息详情中可对发送者「拉黑该用户」或「解除拉黑」（拉黑确认弹窗含可选原因输入框）
+- **树洞主人**：列表仅显示根留言（`rootMessageId` 为 null），每条显示发送者、内容、状态（未读/已读/已回复）；筛选 3 项：全部 / 未读（state=0）/ 已读（state=1 或 3）；树洞状态切换与拉黑/解除拉黑见上方「树洞区」。
 - **非主人（投递者）**：
-  - 按根留言分组，回复挂到对应根留言下
-  - 根留言卡片：显示发送者、内容、状态；右下角有下拉箭头（有回复时显示）
-  - 点击箭头展开/收起回复列表
-  - 回复卡片：显示「{树洞主人昵称}的回复」标签 + 回复内容；不显示状态
-  - 详情页：仅根留言（自己投递的）显示删除按钮，主人回复的消息不显示删除按钮
+  - 按根留言分组，回复挂到对应根留言下；根留言卡片右下角有下拉箭头（有回复时显示），点击展开/收起回复列表
+  - 回复卡片：显示「{树洞主人昵称}的回复」标签 + 回复内容，不显示状态
+  - 详情页：仅自己投递的根留言显示删除按钮，主人回复的消息不显示删除按钮
   - 筛选 4 项：全部 / 未读（state=0）/ 已读（state=1）/ 已回复（state=3）
 
 ### 相关前端 API 封装
@@ -140,7 +138,7 @@
 - 文件：`src/api/treehole.js`
   - `getTreeHoleMessages(ownerId, page, size)`：获取树洞消息列表
   - `sendTreeHoleMessage(ownerId, content, rootMessageId)`：投递树洞消息（rootMessageId 为空为投递新留言，非空为主人回复）
-  - `getTreeHoleInfo(ownerId)`：获取树洞信息（含 state），用于展示关闭/开放树洞按钮；**注意**：axios 响应拦截器返回 `response.data`，故接口得到的是 Result，树洞实体在 `response.data`，状态为 `response.data.state`
+  - `getTreeHoleInfo(ownerId)`：获取树洞信息（含 state），用于展示关闭/开放树洞按钮；接口返回 Result，树洞实体在 `data`，状态为 `data.state`
   - `updateTreeHoleState(ownerId, state)`：更新树洞状态（0=正常，2=禁止投递）
   - `checkBlockStatus(blockedUserId)`：查询当前用户（树洞主人）是否已拉黑某用户，返回 `data: true/false`
   - `blockUser(blockedUserId, reason)`：拉黑用户，`reason` 可选（拉黑原因）
@@ -224,25 +222,6 @@
    - 确认后执行退出登录并跳转到欢迎页（`/`）
    - 防止误触操作
 
-### 使用方式
-
-**默认使用**（左侧占位）：
-```vue
-<NavBar />
-```
-
-**自定义左侧内容**（如返回按钮）：
-```vue
-<NavBar>
-  <template #left>
-    <router-link to="/browse" class="nav-back-btn">
-      <svg class="back-icon">...</svg>
-      <span>返回浏览</span>
-    </router-link>
-  </template>
-</NavBar>
-```
-
 ### 已使用该组件的页面
 
 - `MediaBrowse.vue` - 媒体浏览页（默认左侧）
@@ -271,7 +250,9 @@
 - **文件**：`src/api/media.js`
   - `getMediaRank(category, size)`：获取热门排行榜，`category` 为 `null`/`0`/`1`，`size` 默认 20
 
-### 媒体详情路由（/media/:id）
+## 媒体详情页（/media/:id）
+
+### 路由与组件
 
 - **路由**：`/media/:id`
 - **组件**：`src/views/MediaDetailPage.vue` 包装 `MediaDetail.vue`
@@ -282,13 +263,13 @@
 
 ### 点赞、取消点赞与点赞数（MediaDetail）
 
-- **使用位置**：媒体详情页 `src/views/MediaDetail.vue` 顶部操作栏，点赞图标与点赞数并排展示；按钮根据当前是否已赞切换样式（`liked` class），点击触发点赞/取消点赞。
+- **使用位置**：`src/components/MediaDetail.vue` 顶部操作栏，点赞图标与点赞数并排展示；按钮根据当前是否已赞切换样式（`liked` class），点击触发点赞/取消点赞。
 
 - **前端 API 封装**（`src/api/media.js`）：
   - **点赞**：`likeMedia(mediaId)` → `POST /api/media/{id}/like`（需登录）
   - **取消点赞**：`unlikeMedia(mediaId)` → `POST /api/media/{id}/unlike`（需登录）
   - **查询是否已赞**：`getLikeStatus(mediaId)` → `GET /api/userLikeRecord/media/{mediaId}/status`（需登录，返回 `data: true/false`）
-  - **当前点赞数**：来自详情接口 `getMediaDetail(mediaId)` 的响应字段 `data.likeCount`（后端先读 Redis ZSET，再兜底 media:core/DB，见 overcome.md）
+  - **当前点赞数**：来自详情接口 `getMediaDetail(mediaId)` 的响应字段 `data.likeCount`（后端先读 Redis ZSET，再兜底 DB，见 overcome.md）
 
 - **状态与展示**：
   - `isLiked`：当前用户是否已赞，用于按钮样式与点击行为（已赞点一下→取消，未赞点一下→点赞）
