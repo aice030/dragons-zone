@@ -89,3 +89,6 @@ dragons-frontend/.vscode-test/
 dragons-frontend/*.pid
 dragons-frontend/*.seed
 dragons-frontend/*.pid.lock
+/nginx/dragons-zone.conf
+/dragons-frontend/nginx/default.conf
+/dragons-zone-v0.1.tar
