@@ -327,7 +327,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 }
             } catch (Exception e) {
                 log.warn("uploadComplete: cover upload to OSS failed mediaId={} coverPath={}", mediaId, coverPath, e);
-                // 封面上传失败不阻断主流程，coverStatus 保持 1（正在上传）或可后续置为 3（上传失败），与现有约定一致
             }
         }
 
