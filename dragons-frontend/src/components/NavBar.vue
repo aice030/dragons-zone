@@ -831,7 +831,6 @@ onBeforeUnmount(() => {
 
 .member-dropdown-header {
   padding: 0.9rem 1rem;
-  font-family: 'ZCOOL XiaoWei', 'ZCOOL 小薇体', serif;
   font-size: 1.35rem;
   font-weight: 400;
   color: #0d0d0d;

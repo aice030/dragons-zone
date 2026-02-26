@@ -590,7 +590,7 @@ onBeforeUnmount(() => {
   width: 36px;
   height: 36px;
   border: none;
-  background: rgba(0, 0, 0, 0.2);
+  background: #dc2626;
   color: #fff;
   font-size: 1.5rem;
   line-height: 1;
@@ -603,7 +603,7 @@ onBeforeUnmount(() => {
 }
 
 .media-detail-modal-close:hover {
-  background: rgba(0, 0, 0, 0.4);
+  background: #b91c1c;
 }
 
 .media-detail-modal-loading,
