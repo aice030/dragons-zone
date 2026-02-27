@@ -35,6 +35,7 @@ dragons-zone/
 - **user**：用户与登录凭证、level/state。
 - **media**：媒体元数据，storage_path/cover_path 存对象路径。
 - **media_visible**：成员专区可见（user_id=成员 ID）。
+- **user_promise**：用户上传前承诺记录，user_id 与 agree_time。
 - **tree_hole**：树洞，owner_id 为树洞主人。
 - **tree_hole_message**：留言，含 root_message_id、reply_message_id、state、update_time。
 - **tree_hole_visible** / **tree_hole_message_visible**：树洞与分享可见。
@@ -52,6 +53,7 @@ dragons-zone/
 - 存储抽象 `StorageService`，实现 `MinioStorageService`、`OssStorageService`（@Primary）；配置 `oss.*` / `minio.*`。
 - 两阶段上传：准备上传（`POST /api/media/upload`，file_hash 幂等、返回 uploadUrl/stsCredentials）、通知结果（`POST /api/media/upload/complete`）；实现于 `MediaController`、`MediaServiceImpl`。
 - 媒体基础信息更新、视频封面更新、可见范围差量更新；实现于 `MediaServiceImpl`（含封面更新失败补偿删 OSS）。
+- 上传前承诺记录：上传前弹窗勾选承诺后，前端调用 `POST /api/user/{currentUserId}/promise` 记录 user_promise 表；实现于 `UserPromiseController`、`UserPromiseServiceImpl`。
 
 ### 媒体查询与列表
 

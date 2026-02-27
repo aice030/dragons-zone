@@ -273,7 +273,7 @@
                 type="button"
                 class="btn-submit"
                 :disabled="!canSubmit || uploading"
-                @click="handleSubmit"
+                @click="handleSubmitClick"
               >
                 {{ uploading ? (uploadProgress > 0 ? `${uploadProgress}%` : '上传中...') : '提交' }}
               </button>
@@ -284,7 +284,7 @@
                 type="button"
                 class="btn-submit"
                 :disabled="queue.length === 0 || batchUploading"
-                @click="startBatchUpload"
+                @click="handleStartBatchClick"
               >
                 {{ batchUploading ? `上传中...（${batchDone}/${queue.length}）` : '开始上传' }}
               </button>
@@ -308,6 +308,45 @@
           </div>
         </Transition>
       </Teleport>
+      <Teleport to="body">
+        <Transition name="agreement-fade">
+          <div v-if="showAgreementModal" class="agreement-modal-backdrop" role="dialog" aria-modal="true">
+            <div class="agreement-modal">
+              <h2 class="agreement-modal-title">上传前承诺</h2>
+              <div class="agreement-modal-content">
+                <p>我承诺：</p>
+                <ol class="agreement-modal-list">
+                  <li>上传内容仅限粉丝非商用分享，不用于盈利、广告、带货等商业用途。</li>
+                  <li>不发布恶意、抹黑、造谣、低俗或篡改他人形象的内容。</li>
+                  <li>同意平台审核，违规内容平台可直接删除。</li>
+                </ol>
+              </div>
+              <label class="agreement-checkbox">
+                <input type="checkbox" v-model="agreementChecked" />
+                <span>我已阅读并同意以上承诺</span>
+              </label>
+              <div class="agreement-actions">
+                <button
+                  type="button"
+                  class="btn-cancel"
+                  @click="closeAgreementModal"
+                  :disabled="confirmingUpload"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  class="btn-submit"
+                  :disabled="!agreementChecked || confirmingUpload"
+                  @click="confirmAgreementAndUpload"
+                >
+                  {{ confirmingUpload ? '处理中...' : '确认上传' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
     </div>
   </div>
 </template>
@@ -318,6 +357,8 @@ import { useRouter } from 'vue-router'
 import NavBar from '@/components/NavBar.vue'
 import { getMembers } from '@/config/members'
 import { prepareUpload, uploadComplete } from '@/api/media'
+import { recordUploadPromise } from '@/api/user'
+import { useUserStore } from '@/stores/user'
 import { computeFileHash } from '@/utils/fileHash'
 import { uploadFileToOss, uploadFileToOssMultipart } from '@/utils/ossUpload'
 
@@ -335,6 +376,7 @@ const props = defineProps({
 
 const emit = defineEmits(['upload-success'])
 const router = useRouter()
+const userStore = useUserStore()
 
 const fileInputRef = ref(null)
 const coverInputRef = ref(null)
@@ -362,6 +404,12 @@ const toastVisible = ref(false)
 const toastMessage = ref('')
 const toastType = ref('success') // 'success' | 'error'
 let toastTimer = null
+
+// 上传前承诺弹窗
+const showAgreementModal = ref(false)
+const agreementChecked = ref(false)
+const pendingAction = ref(null) // 'single' | 'batch'
+const confirmingUpload = ref(false)
 
 const form = ref({
   title: '',
@@ -701,13 +749,12 @@ function handleCancel() {
   router.push('/my-uploads')
 }
 
-async function handleSubmit() {
-  if (!canSubmit.value || uploading.value) return
+function validateBeforeVideoUpload() {
+  if (!canSubmit.value || uploading.value) return false
 
-  // 验证
   if (!selectedFile.value) {
     fileError.value = '请选择视频文件'
-    return
+    return false
   }
 
   // 再次校验视频大小上限，防止绕过前端选择校验
@@ -715,9 +762,91 @@ async function handleSubmit() {
     const msg = '文件过大，上传失败'
     fileError.value = msg
     showToast(msg, 'error')
+    return false
+  }
+
+  return true
+}
+
+function validateBeforeBatchUpload() {
+  if (batchUploading.value) return false
+  if (queue.value.length === 0) return false
+  return true
+}
+
+function openAgreementModal(action) {
+  if (uploading.value || batchUploading.value) return
+  pendingAction.value = action
+  agreementChecked.value = false
+  showAgreementModal.value = true
+}
+
+function closeAgreementModal() {
+  if (confirmingUpload.value) return
+  showAgreementModal.value = false
+  pendingAction.value = null
+  agreementChecked.value = false
+}
+
+function handleSubmitClick() {
+  if (!validateBeforeVideoUpload()) return
+  openAgreementModal('single')
+}
+
+function handleStartBatchClick() {
+  if (!validateBeforeBatchUpload()) return
+  openAgreementModal('batch')
+}
+
+async function confirmAgreementAndUpload() {
+  if (!agreementChecked.value || confirmingUpload.value) return
+  if (!pendingAction.value) {
+    closeAgreementModal()
     return
   }
 
+  // 再次校验，防止绕过前端校验直接调用上传函数
+  if (pendingAction.value === 'single' && !validateBeforeVideoUpload()) {
+    return
+  }
+  if (pendingAction.value === 'batch' && !validateBeforeBatchUpload()) {
+    return
+  }
+
+  const currentUserId = userStore.userInfo?.id ?? null
+  if (!currentUserId) {
+    showToast('承诺确认失败，请重新确认：未登录或用户信息缺失', 'error')
+    return
+  }
+
+  confirmingUpload.value = true
+  confirmingUpload.value = true
+  const action = pendingAction.value
+  try {
+    // 第一步：先调用“上传前承诺记录”接口
+    const promiseRes = await recordUploadPromise(currentUserId)
+    if (!promiseRes || promiseRes.code !== 200) {
+      const msg = promiseRes?.message || '承诺确认失败，请重新确认'
+      showToast(`承诺确认失败，请重新确认：${msg}`, 'error')
+      return
+    }
+
+    // 记录成功后再真正执行上传
+    pendingAction.value = null
+    showAgreementModal.value = false
+
+    if (action === 'single') {
+      await handleSubmit()
+    } else if (action === 'batch') {
+      await startBatchUpload()
+    }
+  } finally {
+    confirmingUpload.value = false
+    agreementChecked.value = false
+  }
+}
+
+async function handleSubmit() {
   uploading.value = true
   fileError.value = ''
   coverError.value = ''
@@ -1020,6 +1149,85 @@ onBeforeUnmount(() => {
   background: rgba(39, 174, 96, 0.9);
   border-radius: 2px;
   transition: width 0.2s ease;
+}
+
+/* 上传前承诺弹窗 */
+.agreement-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2100;
+}
+
+.agreement-modal {
+  width: 90vw;
+  max-width: 480px;
+  max-height: 80vh;
+  background: #111827;
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  padding: 20px 24px 18px;
+  color: #f9fafb;
+  display: flex;
+  flex-direction: column;
+}
+
+.agreement-modal-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.agreement-modal-content {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #e5e7eb;
+  margin-bottom: 12px;
+  overflow-y: auto;
+}
+
+.agreement-modal-list {
+  margin-left: 1.2rem;
+  padding-left: 0.3rem;
+}
+
+.agreement-modal-list li + li {
+  margin-top: 4px;
+}
+
+.agreement-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  margin: 4px 0 10px;
+  color: #e5e7eb;
+}
+
+.agreement-checkbox input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+}
+
+.agreement-actions {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.agreement-fade-enter-active,
+.agreement-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.agreement-fade-enter-from,
+.agreement-fade-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
 }
 
 /* 嵌入到“我的上传”页面时：去掉全屏页面感 */

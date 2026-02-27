@@ -27,7 +27,8 @@ public class CodeGenerator {
                 })
                 .strategyConfig(builder -> {
                     builder.addInclude("user", "tree_hole", "tree_hole_message", "tree_hole_message_visible",
-                                    "media", "media_visible", "tree_hole_blacklist", "user_like_record") // 设置需要生成的表名
+                                    "media", "media_visible", "tree_hole_blacklist",
+                                    "user_like_record", "user_promise") // 设置需要生成的表名
                             .entityBuilder()
                             .enableLombok() // 启用 Lombok
                             .enableTableFieldAnnotation() // 启用字段注解

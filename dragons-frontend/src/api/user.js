@@ -87,3 +87,12 @@ export function updateUserLevel(targetUserId, level) {
 export function updateUserState(targetUserId, state) {
   return api.put(`/api/user/${targetUserId}/state`, { state })
 }
+
+/**
+ * 记录用户上传前承诺（需登录）
+ * @param {number} currentUserId - 当前登录用户ID（必须与后端 JWT 一致）
+ * @returns {Promise} 通用 Result
+ */
+export function recordUploadPromise(currentUserId) {
+  return api.post(`/api/user/${currentUserId}/promise`)
+}
