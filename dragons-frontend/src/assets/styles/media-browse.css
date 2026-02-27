@@ -1601,7 +1601,7 @@
 }
 
 .upload-media-field {
-  padding: 1.25rem 1.5rem;
+  padding: 0.9rem 1.8rem;
 }
 
 .upload-media-field-label {
@@ -2082,7 +2082,7 @@
 .upload-media-divider {
   height: 1px;
   background: rgba(0, 0, 0, 0.1);
-  margin: 0;
+  margin: 0.4rem 0;
 }
 
 /* 输入框 */

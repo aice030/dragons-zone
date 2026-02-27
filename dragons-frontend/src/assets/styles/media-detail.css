@@ -233,16 +233,31 @@
   height: 180px;
   z-index: 1003; /* 在媒体之上，但不遮挡控制条交互（无背景） */
   background: transparent;
-  pointer-events: auto;
+  pointer-events: none;
+}
+
+/* 仅在支持 hover 的设备上启用“下部悬浮触发区”，并避免覆盖视频控制条 */
+@media (hover: hover) {
+  .media-bottom-hover-zone {
+    /* 触发区域：与文字区域更贴合，整体与描述块底边对齐 */
+    bottom: 130px; /* 与 .media-description-under 的 bottom 保持一致 */
+    height: 180px;
+    width: min(920px, calc(100% - 3rem));
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    pointer-events: auto; /* 允许 hover 触发描述显示，但不挡住最底部控制条 */
+  }
 }
 
 /* 描述（媒体下方）：含标题+描述，悬浮下部触发区才显示 */
 .media-description-under {
   position: absolute;
   left: 50%;
-  bottom: 110px; /* 避开视频控制条与底部信息层 */
-  transform: translateX(-50%) translateY(10px);
+  bottom: 130px; /* 与触发区域大致对齐，略高于控制条 */
+  transform: translateX(-50%) translateY(6px);
   max-width: min(920px, calc(100% - 3rem));
+  max-height: 180px;
   padding: 0.85rem 1rem;
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.55);
@@ -251,7 +266,9 @@
   font-size: 0.95rem;
   line-height: 1.6;
   z-index: 1004; /* 高于媒体与信息层 */
-  pointer-events: none; /* 不挡住视频拖动/控制条 */
+  /* 允许在描述区域内部滚动查看全部内容 */
+  pointer-events: auto;
+  overflow-y: auto;
   white-space: pre-wrap;
   opacity: 0;
   transition: opacity 160ms ease, transform 160ms ease;
@@ -268,12 +285,13 @@
   margin: 0;
 }
 
-/* 抖音式：只有悬浮到下部区域才显示描述 */
-.media-display:hover .media-description-under {
-  opacity: 0;
+.media-bottom-hover-zone:hover ~ .media-description-under {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
-.media-bottom-hover-zone:hover ~ .media-description-under {
+/* 当鼠标在描述区域本身上方时保持显示，方便滚动阅读 */
+.media-description-under:hover {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }

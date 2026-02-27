@@ -65,17 +65,29 @@
           <button
             type="button"
             class="myuploads-sidenav-item"
-            :class="{ active: activePanel === 'upload' }"
-            @click="switchPanel('upload')"
+            :class="{ active: activePanel === 'upload' && currentUploadMode === 'image' }"
+            @click="handleClickUploadMode('image')"
           >
-            上传新内容
+            上传图片
+          </button>
+          <button
+            type="button"
+            class="myuploads-sidenav-item"
+            :class="{ active: activePanel === 'upload' && currentUploadMode === 'video' }"
+            @click="handleClickUploadMode('video')"
+          >
+            上传视频
           </button>
         </aside>
 
         <!-- 右侧内容 -->
         <main class="myuploads-main">
           <div v-show="activePanel === 'upload'" class="myuploads-panel-upload">
-            <UploadMedia :embedded="true" @upload-success="handleUploadSuccess" />
+            <UploadMedia
+              :embedded="true"
+              :default-mode="currentUploadMode"
+              @upload-success="handleUploadSuccess"
+            />
           </div>
 
           <div v-show="activePanel !== 'upload'" class="my-uploads-container">
@@ -246,6 +258,8 @@ const showDetailModal = ref(false)
 const detailMediaId = ref(null)
 
 const activePanel = ref('list') // 'list' | 'upload'
+// 实际上传面板使用的模式（图片/视频）
+const currentUploadMode = ref('image') // 'image' | 'video'
 
 const currentCategory = ref(null)
 const mediaList = ref([])
@@ -510,6 +524,13 @@ async function handleBulkDeleteConfirm() {
     bulkDeleting.value = false
   }
 }
+
+function handleClickUploadMode(mode) {
+  if (mode !== 'image' && mode !== 'video') return
+  currentUploadMode.value = mode
+  // 切换到上传面板，内部会根据 key 和 default-mode 控制具体模式
+  switchPanel('upload', true)
+}
 </script>
 
 <style scoped>
@@ -519,6 +540,7 @@ async function handleBulkDeleteConfirm() {
   display: flex;
   gap: 16px;
   align-items: stretch;
+  position: relative;
 }
 
 .myuploads-sidenav {
@@ -533,6 +555,11 @@ async function handleBulkDeleteConfirm() {
   height: fit-content;
   position: sticky;
   top: 88px;
+}
+
+.myuploads-upload-dropdown {
+  position: relative;
+  margin-top: 8px; /* 保持与原来两个按钮的垂直间距一致 */
 }
 
 .myuploads-sidenav-item {
@@ -570,5 +597,43 @@ async function handleBulkDeleteConfirm() {
 .myuploads-main {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.myuploads-panel-upload {
+  max-width: 1400px;
+  margin-left: 8px;
+  margin-right: 0;
+}
+
+:deep(.upload-media-container) {
+  max-width: 1200px;
+}
+
+.upload-mode-panel {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  margin-left: 12px;
+  width: 200px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+  height: fit-content;
+  z-index: 50;
+}
+
+/* 下拉菜单动画（参考 NavBar.vue 中 dropdown 动效） */
+.dropdown-enter-active,
+.dropdown-leave-active {
+  transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+}
+
+.dropdown-enter-from,
+.dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 </style>

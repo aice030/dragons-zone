@@ -22,7 +22,11 @@
         <div class="upload-media-form">
           <!-- 上传图片/视频（入口） -->
           <div class="upload-media-field">
-            <div class="upload-mode-switch">
+            <!-- 独立页面中展示模式切换按钮；嵌入模式下由父级控制模式 -->
+            <div
+              v-if="!embedded"
+              class="upload-mode-switch"
+            >
               <button
                 type="button"
                 class="upload-mode-btn"
@@ -41,10 +45,10 @@
               </button>
             </div>
 
-            <p v-if="contentMode === 'video'" class="upload-media-field-desc">
+            <p v-if="contentMode === 'video'" class="upload-media-field-label">
               视频仅支持单个上传。
             </p>
-            <p v-else class="upload-media-field-desc">
+            <p v-else class="upload-media-field-label">
               图片支持单独上传和批量上传，批量上传的所有图片共享相同标题和描述。
             </p>
           </div>
@@ -256,9 +260,6 @@
             </div>
           </div>
 
-          <!-- 分割线 -->
-          <div class="upload-media-divider"></div>
-
           <!-- 提交按钮 -->
           <div class="upload-media-actions">
             <button type="button" class="btn-cancel" @click="handleCancel">取消</button>
@@ -352,7 +353,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import NavBar from '@/components/NavBar.vue'
 import { getMembers } from '@/config/members'
@@ -371,6 +372,11 @@ const props = defineProps({
   embedded: {
     type: Boolean,
     default: false
+  },
+  // 外部（如 MyUploads）可通过此 prop 控制初始/当前模式
+  defaultMode: {
+    type: String,
+    default: 'image'
   }
 })
 
@@ -398,6 +404,17 @@ const batchUploading = ref(false)
 const batchDone = ref(0)
 const batchError = ref('')
 const batchInfo = ref('')
+
+// 同步外部传入的 defaultMode 到内部 contentMode
+watch(
+  () => props.defaultMode,
+  (mode) => {
+    if (mode !== 'image' && mode !== 'video') return
+    if (batchUploading.value || uploading.value) return
+    setContentMode(mode)
+  },
+  { immediate: true }
+)
 
 // 上传结果提示
 const toastVisible = ref(false)
@@ -432,6 +449,7 @@ const canSubmit = computed(() => {
 })
 
 function setContentMode(mode) {
+  if (mode !== 'image' && mode !== 'video') return
   if (batchUploading.value || uploading.value) return
   contentMode.value = mode
   fileError.value = ''
@@ -1246,4 +1264,5 @@ onBeforeUnmount(() => {
   padding-top: 0.25rem;
   padding-bottom: 0;
 }
+
 </style>

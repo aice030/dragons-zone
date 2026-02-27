@@ -119,7 +119,7 @@
           <!-- 标题+描述：默认隐藏，悬浮下部触发区才显示 -->
           <div v-if="mediaDetail.title || mediaDetail.description" class="media-description-under">
             <div v-if="mediaDetail.title" class="media-description-title">{{ mediaDetail.title }}</div>
-            <div v-if="mediaDetail.description" class="media-description-text">简介：{{ mediaDetail.description }}</div>
+            <div v-if="mediaDetail.description" class="media-description-text">{{ mediaDetail.description }}</div>
           </div>
         </div>
         

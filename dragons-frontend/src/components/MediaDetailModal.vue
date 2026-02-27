@@ -19,7 +19,7 @@
           <!-- 内容 -->
           <template v-else-if="detail">
             <!-- 封面图 -->
-            <div class="media-detail-modal-cover-wrapper">
+            <div class="media-detail-modal-cover-wrapper" @click="openCoverPreview">
               <img
                 v-if="displayCoverUrl"
                 :src="displayCoverUrl"
@@ -227,6 +227,31 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 封面大图预览：使用单独的 Transition，避免与上方共用一个根 -->
+    <Transition name="modal-fade">
+      <div
+        v-if="showCoverPreview && displayCoverUrl"
+        class="media-detail-cover-preview-overlay"
+        @click.self="closeCoverPreview"
+      >
+        <div class="media-detail-cover-preview-box">
+          <button
+            type="button"
+            class="media-detail-cover-preview-close"
+            aria-label="关闭封面预览"
+            @click="closeCoverPreview"
+          >
+            ×
+          </button>
+          <img
+            :src="displayCoverUrl"
+            :alt="detail?.title || '封面大图'"
+            class="media-detail-cover-preview-image"
+          />
+        </div>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -264,6 +289,7 @@ const coverInputRef = ref(null)
 const isCoverChanging = ref(false)
 const selectedCoverFile = ref(null)
 const coverUploading = ref(false)
+const showCoverPreview = ref(false)
 
 const displayCoverUrl = computed(() => pendingCoverPreviewUrl.value || coverUrl.value)
 
@@ -511,6 +537,15 @@ function cancelCoverChange() {
   if (coverInputRef.value) coverInputRef.value.value = ''
 }
 
+function openCoverPreview() {
+  if (!displayCoverUrl.value) return
+  showCoverPreview.value = true
+}
+
+function closeCoverPreview() {
+  showCoverPreview.value = false
+}
+
 function close() {
   isEditing.value = false
   isZonesEditing.value = false
@@ -518,6 +553,7 @@ function close() {
   isCoverChanging.value = false
   selectedCoverFile.value = null
   coverUploading.value = false
+  showCoverPreview.value = false
   if (pendingCoverPreviewUrl.value) {
     URL.revokeObjectURL(pendingCoverPreviewUrl.value)
     pendingCoverPreviewUrl.value = ''
@@ -1071,5 +1107,58 @@ onBeforeUnmount(() => {
 .modal-fade-enter-from .media-detail-modal-box,
 .modal-fade-leave-to .media-detail-modal-box {
   transform: scale(0.95);
+}
+
+/* 封面大图预览 */
+.media-detail-cover-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  padding: 1rem;
+}
+
+.media-detail-cover-preview-box {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-detail-cover-preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.media-detail-cover-preview-close {
+  position: absolute;
+  top: -18px;
+  right: -18px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: #dc2626;
+  color: #fff;
+  font-size: 2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.media-detail-cover-preview-close:hover {
+  background: #b91c1c;
+  transform: rotate(90deg);
 }
 </style>
