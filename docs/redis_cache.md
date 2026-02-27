@@ -2,7 +2,7 @@
 
 ## 缓存
 
-### 缓存媒体核心数据（media:core）
+### 1.缓存媒体核心数据（media:core）
 
 #### 描述
 缓存媒体资源的完整核心数据，采用 `Media` 实体完整字段。该缓存作为单一数据源，供 `MediaDetailResult`、`MediaListItem`、`UploadResult` 等不同返回结构选择性填充使用。
@@ -12,9 +12,11 @@
 - **二级缓存（Caffeine）**：本地缓存，减少Redis访问压力，提升响应速度（待实现）
 先查Caffeine本地缓存，未命中再查Redis，都未命中则查数据库。
 
-#### 缓存Key
-- **Redis Key格式**：`media:core:{mediaId}`
+#### Redis 结构
+
+- **Key格式**：`media:core:{mediaId}`
   - 示例：`media:core:1`
+- **类型**：String
 - **Caffeine Key格式**：`media:core:{mediaId}`（与Redis保持一致，待实现）
 
 #### 缓存Value
@@ -78,7 +80,7 @@
 
 **说明**：下载链接（`getDownloadUrl`）不进行缓存，因为生成预签名URL是纯本地计算（HMAC-SHA256签名），CPU占用很小，对于QPS < 1000的项目无需缓存。每次请求直接调用 `StorageService.getPresignedUrl()` 生成即可。
 
-### 缓存media列表（仅缓存media_id）
+### 2.缓存media列表（仅缓存media_id）
 
 #### 描述
 缓存媒体列表的ID集合，复用 `media:core` 缓存填充列表项。采用**ID列表缓存 + 核心数据缓存**的二级结构：
@@ -86,29 +88,29 @@
 - **核心数据缓存**：复用 `media:core`，通过ID批量获取完整数据
 查询时先查ID列表，再批量从 `media:core` 获取数据填充返回结构。
 
-#### 缓存Key
+#### Redis 结构
 
 **media展示列表**
 - **Redis Key格式**：`media:list:{zoneUserId}:{category}:{page}:{size}`
   - `zoneUserId`：0=公共区，其他=成员专区ID
   - `category`：`all`=全部，`0`=图片，`1`=视频（null 映射为 `all`）
   - 示例：`media:list:0:all:1:20`（公共区全部类型第1页）、`media:list:0:0:1:20`（公共区图片第1页）
-
-**用户管理media列表（暂未启用）**
-- **Redis Key格式**：`media:my:{uploaderId}:{category}:{page}:{size}`
-  - `uploaderId`：上传者用户ID
-  - `category`：`all`=全部，`0`=图片，`1`=视频（null 映射为 `all`）
-  - 示例：`media:my:1:all:1:20`（用户1的全部类型第1页）、`media:my:1:0:1:20`（用户1的图片第1页）
-  - **说明**：当前业务未使用该列表缓存，listMyUpload 直接查 DB 再按 id 从 media:core 或 DB 取数；Redis 中相关方法保留实现，便于后续启用。
-
-#### 缓存Value
-包含列表总数和媒体ID列表的结构，序列化为JSON对象：
+- **类型**：String
+- **Value**：实际 Value 为 `MediaListCacheValue` 对象（使用 Spring Data Redis 默认序列化方式存入 Redis，类型为 String/Object），其逻辑结构等价于如下 JSON：
 ```json
 {
   "total": 100,
   "mediaIds": [1, 2, 3, 4, 5]
 }
 ```
+
+**用户管理media列表（暂未启用）**
+- **Redis Key格式**：`media:my:{uploaderId}:{category}:{page}:{size}`
+  - `uploaderId`：上传者用户ID
+  - `category`：`all`=全部，`0`=图片，`1`=视频（null 映射为 `all`）
+  - 示例：`media:my:1:all:1:20`（用户1的全部类型第1页）、`media:my:1:0:1:20`（用户1的图片第1页）
+- **类型**：String
+- **说明**：当前业务未使用该列表缓存，listMyUpload 直接查 DB 再按 id 从 media:core 或 DB 取数；Redis 中相关方法保留实现，便于后续启用。
 
 #### 过期时间
 - **Redis TTL**：300秒（5分钟）
@@ -146,10 +148,23 @@
 4. 释放锁（try-finally 确保释放）
 
 **锁管理**：
-- 分布式锁：使用 Redis `SET lock:media:core:{mediaId} {requestId} EX 5 NX` 实现
-- 锁超时：5秒（防止死锁）
+- **Key 格式与 Value 语义**
+  - `lock:media:core:{mediaId}`：核心数据锁（对应 `LOCK_MEDIA_CORE_KEY_PREFIX`）  
+    - 类型：String  
+    - Value：`requestId`（一次请求的唯一标识），用于释放/续期时校验持有者  
+  - `lock:media:list:{zoneUserId}:{category}:{page}:{size}`：媒体展示列表锁（对应 `LOCK_MEDIA_LIST_KEY_PREFIX`）  
+    - 类型：String  
+    - Value：`requestId`  
+  - `lock:media:my:{uploaderId}:{category}:{page}:{size}`：「我的上传」列表锁（对应 `LOCK_MEDIA_MY_KEY_PREFIX`）  
+    - 类型：String  
+    - Value：`requestId`  
+  - `lock:media:liked:{mediaId}`：查询已赞状态锁（对应 `LOCK_MEDIA_LIKED_KEY_PREFIX`）  
+    - 类型：String  
+    - Value：`requestId`
+- 分布式锁命令：使用 Redis `SET {lockKey} {requestId} EX 5 NX` 实现
+- 锁超时：5秒（防止死锁，对应各服务中的 `LOCK_TTL_SECONDS`）
 - 锁等待：获取失败则等待 100ms 后重试查询缓存，最多重试3次
-- 锁粒度：按 `mediaId` 加锁
+- 锁粒度：按 `mediaId` 或「media 列表维度」加锁（同一 key 仅允许一个持有者）
 
 **实现位置**：
 - getMediaDetail()方法，获取媒体详情
@@ -160,8 +175,15 @@
 
 **方案**：空值缓存
 
-- media:core 空值缓存：当单个媒体不存在时，缓存 "__NULL__"，TTL 60秒
-- 列表空值缓存：当查询结果为空时，缓存 {"total": 0, "mediaIds": []}，TTL 300秒
+- **media:core 空值缓存**
+  - **Key 格式**：与正常数据一致，`media:core:{mediaId}`
+  - **类型**：String
+  - **Value**：固定字符串 `"__NULL__"`（对应代码中的 `NULL_VALUE_MARKER`），用于标记该 mediaId 在 DB 中不存在
+  - **TTL**：60秒
+- **列表空值缓存（media:list / media:my）**
+  - **Key 格式**：与正常列表一致，`media:list:{zoneUserId}:{category}:{page}:{size}` / `media:my:{uploaderId}:{category}:{page}:{size}`
+  - **类型**：String/Object，Value 为 `MediaListCacheValue` 对象（逻辑结构为 `{"total": 0, "mediaIds": []}`）
+  - **TTL**：300秒
 
 **空值缓存**：
 - 空值标记：`"__NULL__"`（字符串）
@@ -175,8 +197,22 @@
 
 ## 排行榜（点赞数）
 
+### Redis 结构
+
+#### Key / Value 结构
+- **Key 格式**
+  - `media:rank:all`：全部媒体按点赞数排序
+  - `media:rank:0`：仅图片
+  - `media:rank:1`：仅视频
+  - 以上 Key 常量对应代码中的 `RANK_KEY_ALL`、`RANK_KEY_0`、`RANK_KEY_1`
+- **类型**：ZSET
+- **Value 语义**
+  - **member**：媒体 ID 的字符串形式，例如 `"123"`（代码中从 `String` 解析为 `Long`）
+  - **score**：点赞数 `likeCount`，使用 `Double` 存储，在读取时转为 `long`
+  - 同一 mediaId 在 `media:rank:all` 与 `media:rank:{category}` 中各有一条记录
+
 ### 设计要点
-- 使用 Redis ZSET 存储点赞数并排序：member = mediaId，score = likeCount（仅记录 media id，与列表缓存一致）。
+- 使用 Redis ZSET 存储点赞数并排序：member = mediaId（字符串），score = likeCount（仅记录 media id，与列表缓存一致）。
 - 按分类分桶：`category=null`（全部）、`0`（图片）、`1`（视频）各一个 ZSET，便于「分类 TopN」查询。
 - **写流程（两种同步方式，由 MediaServiceImpl 内注释切换）**：  
   - **方式一（当前默认）**：先 DB 再 Redis。事务落库 `user_like_record` 与 `media.like_count`，再按 DB 的 likeCount 回写 ZSET 与位图（`setScoreForMedia` + `setLiked`）。无 MQ，轻量。  
@@ -214,11 +250,11 @@
 
 ### 需明确与建议
 
-1. **Key 格式**
+1. **Key 与写入行为**
    - `media:rank:all`：全部媒体按点赞数排序
    - `media:rank:0`：图片
    - `media:rank:1`：视频  
-   一次点赞需更新 2 个 ZSET：`media:rank:all` + `media:rank:{category}`（Lua 脚本保证原子性）。
+   一次点赞需更新 2 个 ZSET：`media:rank:all` + `media:rank:{category}`（Lua 脚本保证「两条 ZSET + 位图」原子性）。
 
 2. **取数范围**
    - 前 N，默认 20，接口用 `size` 参数，实现用 `ZREVRANGE key 0 (size-1)` 即可支持分页/更多。
@@ -235,17 +271,22 @@
 
 ### 查询点赞记录（是否已赞）
 
+#### 场景
 用于「查询当前用户是否已赞某媒体」接口（如媒体详情页展示已赞/未赞按钮）：只查 Redis，以 Redis 为准。
 
 #### Redis 结构
 - **Key 格式**：`media:liked:{mediaId}`
-- **类型**：位图（BITMAP，底层为 string）
+- **类型**：位图 String（BITMAP）
 - **语义**：offset = userId，bit = 1 表示该用户已赞；适合 userId 连续且范围有界的场景，内存固定约 ceil(maxUserId/8) 字节/媒体。
+- **Value**：Redis String 底层是一段二进制位数组，例如 `00010010...`，第 *i* 位代表 `userId = i` 的点赞状态：  
+  - 该位为 `1` 表示已赞，为 `0` 表示未赞  
+  - 未设置的位置默认视为 `0`，key 不存在时 `GETBIT` 也返回 `0`（业务上统一视为未赞）  
+  - 内存占用约为 \(\lceil \text{maxUserId} / 8 \rceil\) 字节/媒体，与用户 ID 上限线性相关
 
 #### 查询流程
 1. **只查 Redis**：对 `media:liked:{mediaId}` 执行 `GETBIT media:liked:{mediaId} {userId}`，若为 1 则已赞返回 true；若为 0 或 key 不存在则视为未赞返回 false。点赞/取消点赞已先写 Redis 再 MQ 同步 DB，故不查 DB、不写回。
 
-#### 与写操作的一致
+#### 读写一致
 - **点赞**：对 `media:liked:{mediaId}` 执行 `SETBIT media:liked:{mediaId} {userId} 1`（与 ZSET ZINCRBY 同时进行），保证后续查询命中 Redis。
 - **取消点赞**：对 `media:liked:{mediaId}` 执行 `SETBIT media:liked:{mediaId} {userId} 0`（与 ZSET ZINCRBY -1 同时进行）。
 - **媒体删除/下架**：从排行榜 ZSET 中 ZREM 该 mediaId 时，同时 `DEL media:liked:{mediaId}`，避免脏读。
