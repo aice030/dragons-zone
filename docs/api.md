@@ -1,33 +1,30 @@
-# API接口设计文档 - Dragons Zone
+# API 接口说明
 
-## 用户服务接口设计（最终版）
+## 约定
 
-### 接口路径规范
-所有用户相关接口统一使用前缀：`/api/user/`
+- **统一响应格式**：`{ "code", "message", "data", "timestamp" }`。成功时 `code` 为 200，失败时 `data` 多为 null，错误信息见 `message` 及文末状态码说明。
+- **接口前缀**：用户 `/api/user/`；媒体 `/api/media/`、`/api/mediaVisible/`；树洞 `/api/treehole/`、`/api/treeholeMessageVisible/`、`/api/treeholeBlacklist/`。
+- **鉴权**：需登录的接口请在请求头携带 `Authorization: Bearer <JWT_TOKEN>`。
 
 ---
 
-## 1. 用户登录接口
+## 一、用户
 
-### POST /api/user/login
+### 1. 用户登录
 
-**功能说明**：用户登录，验证用户名和密码，返回JWT Token和用户基本信息
+**POST** `/api/user/login`
 
-**请求参数**：
-```json
-{
-  "loginName": "用户名",
-  "password": "密码"
-}
-```
+用户登录，验证用户名和密码，返回 JWT 与用户基本信息。
 
-**参数说明**：
+**请求参数**（JSON Body）
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | loginName | String | 是 | 登录名 |
-| password | String | 是 | 密码（明文，后端会加密验证） |
+| password | String | 是 | 密码 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -45,73 +42,27 @@
 }
 ```
 
-**失败响应**：
-- 用户名或密码错误（4002）：
-```json
-{
-  "code": 4002,
-  "message": "用户名或密码错误",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 用户已被注销（4007）：
-```json
-{
-  "code": 4007,
-  "message": "用户已被注销",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 用户已被拉黑（4008）：
-```json
-{
-  "code": 4008,
-  "message": "用户已被拉黑",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-**业务逻辑**：
-1. 验证用户名和密码
-2. 检查用户状态（state）：
-   - state=0：正常，允许登录
-   - state=1：已注销，不允许登录
-   - state=2：已拉黑，不允许登录
-3. 密码验证通过后，生成JWT Token
-4. 返回Token和用户基本信息（不含密码、手机号）
+**失败响应**：4002 用户名或密码错误；4007 用户已注销；4008 用户已拉黑。
 
 ---
 
-## 2. 用户注册接口
+### 2. 用户注册
 
-### POST /api/user/register
+**POST** `/api/user/register`
 
-**功能说明**：新用户注册，创建用户账号
+新用户注册，创建账号。
 
-**请求参数**：
-```json
-{
-  "loginName": "登录名",
-  "password": "密码",
-  "nickName": "昵称",
-  "phoneNumber": "手机号"
-}
-```
+**请求参数**（JSON Body）
 
-**参数说明**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| loginName | String | 是 | 登录名（需唯一） |
-| password | String | 是 | 密码（明文，后端会加密存储） |
+| loginName | String | 是 | 登录名（唯一） |
+| password | String | 是 | 密码 |
 | nickName | String | 是 | 昵称 |
-| phoneNumber | String | 是 | 手机号（需唯一，11位数字） |
+| phoneNumber | String | 是 | 手机号（唯一，11 位数字） |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -124,85 +75,26 @@
 }
 ```
 
-**失败响应**：
-- 用户名已存在（4001）：
-```json
-{
-  "code": 4001,
-  "message": "用户名已存在",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 手机号已存在（4009）：
-```json
-{
-  "code": 4009,
-  "message": "手机号已被注册",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 手机号格式错误（4010）：
-```json
-{
-  "code": 4010,
-  "message": "手机号格式不正确",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 请求参数错误（400）：
-```json
-{
-  "code": 400,
-  "message": "请求参数错误",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-**业务逻辑**：
-1. 验证请求参数（必填字段、格式等）
-2. 检查用户名是否已存在
-3. 检查手机号是否已存在
-4. 验证手机号格式（11位数字）
-5. 密码使用BCrypt加密存储
-6. 自动设置默认值：
-   - `level`: 2（普通用户）
-   - `state`: 0（正常状态）
-7. 保存用户信息到数据库
-8. 返回用户ID和登录名
+**失败响应**：4001 用户名已存在；4009 手机号已注册；4010 手机号格式错误；400 请求参数错误。
 
 ---
 
-## 3. 用户注销接口
+### 3. 用户注销
 
-### POST /api/user/deregister
+**POST** `/api/user/deregister`
 
-**功能说明**：用户注销账号（逻辑删除），需要密码二次确认
+用户注销账号（逻辑删除），需密码二次确认。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**请求参数**：
-```json
-{
-  "password": "密码"
-}
-```
+**请求参数**（JSON Body）
 
-**参数说明**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| password | String | 是 | 密码（用于二次确认） |
+| password | String | 是 | 当前密码 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -212,84 +104,27 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**失败响应**：
-- 未授权（401）：
-```json
-{
-  "code": 401,
-  "message": "未授权，请先登录",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- Token无效或已过期（4003）：
-```json
-{
-  "code": 4003,
-  "message": "Token无效或已过期",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 密码错误（4002）：
-```json
-{
-  "code": 4002,
-  "message": "密码错误",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 用户已被注销（4007）：
-```json
-{
-  "code": 4007,
-  "message": "用户已被注销",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-**业务逻辑**：
-1. 从请求头获取JWT Token并验证
-2. 从Token中解析用户ID
-3. 验证密码（二次确认）
-4. 检查用户状态（如果已被注销，不允许重复注销）
-5. 执行逻辑删除：将 `state` 字段设置为 `1`（已注销）
-6. **注意**：用户数据（媒体、树洞等）保留，其他用户仍可查看
+**失败响应**：401 未授权；4003 Token 无效或已过期；4002 密码错误；4007 用户已注销。
 
 ---
 
-## 4. 通过手机号修改密码接口（MVP简化版）
+### 4. 通过手机号修改密码（已登录）
 
-### POST /api/user/resetPasswordByPhone
+**POST** `/api/user/resetPasswordByPhone`
 
-**功能说明**：通过手机号修改密码（仅允许修改自己的密码，MVP简化方案）。
+已登录用户通过手机号修改本人密码；手机号须与当前用户一致。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**请求参数**：
-```json
-{
-  "phoneNumber": "手机号",
-  "newPassword": "新密码"
-}
-```
+**请求参数**（JSON Body）
 
-**参数说明**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| phoneNumber | String | 是 | 手机号（11位数字） |
-| newPassword | String | 是 | 新密码（明文，后端会加密存储） |
+| phoneNumber | String | 是 | 手机号（须为当前用户绑定） |
+| newPassword | String | 是 | 新密码 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -299,47 +134,57 @@ Content-Type: application/json
 }
 ```
 
-**失败响应**：
-- 未授权（401）：未登录或Token无效
-- 无权限（403）：手机号与当前登录用户不匹配
-
-**业务逻辑**：
-1. 从 JWT 获取当前用户ID
-2. 查询当前用户信息并校验状态（已注销/拉黑不允许修改）
-3. 校验请求中的手机号必须与该用户绑定手机号一致
-4. 使用 BCrypt 加密新密码并更新到数据库
+**失败响应**：401 未授权；403 手机号与当前用户不匹配。
 
 ---
 
-## 5. 修改用户等级接口
+### 5. 未登录找回密码
 
-### PUT /api/user/{targetUserId}/level
+**POST** `/api/user/forgotPassword`
 
-**功能说明**：修改指定用户的等级（仅作者 `level=0` 或管理员 `level=1` 可操作）
+未登录状态下通过登录名与手机号校验身份后重置密码（无需验证码）。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求参数**（JSON Body）
 
-**路径参数**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| targetUserId | Long | 是 | 目标用户ID |
+| loginName | String | 是 | 登录名 |
+| phoneNumber | String | 是 | 注册时绑定的手机号 |
+| newPassword | String | 是 | 新密码（6～64 位） |
 
-**请求参数**（JSON）：
+**成功响应（200）**
+
 ```json
 {
-  "level": 1
+  "code": 200,
+  "message": "密码已重置，请使用新密码登录",
+  "data": null,
+  "timestamp": 1705564800000
 }
 ```
 
+**失败响应**：400 参数错误；4010 手机号格式错误；4017 登录名与手机号不匹配；4007/4008 用户已注销/已拉黑。
+
+---
+
+### 6. 修改用户等级
+
+**PUT** `/api/user/{targetUserId}/level`
+
+修改指定用户的等级，仅作者或管理员可操作。
+
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
+
+**路径参数**：`targetUserId`（Long，目标用户 ID）
+
+**请求参数**（JSON Body）
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| level | Byte | 是 | 新等级（0=作者，1=管理员，2=普通用户，3=游客） |
+| level | Byte | 是 | 0=作者，1=管理员，2=普通用户，3=游客 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -349,50 +194,28 @@ Content-Type: application/json
 }
 ```
 
-**失败响应**：
-- 未授权（401）：未登录或Token无效
-- 无权限（403）：当前用户不是作者或管理员
-- 请求参数错误（400）：level 参数为空或无效
-- 资源不存在（404）：targetUserId 对应的用户不存在
-
-**业务逻辑**：
-1. 从 JWT 获取当前用户ID
-2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
-3. 查询目标用户是否存在
-4. 更新目标用户的 `level` 字段
-5. 更新 `updateTime` 字段
+**失败响应**：401 未授权；403 无权限；400 参数错误；404 用户不存在。
 
 ---
 
-## 6. 修改用户状态接口
+### 7. 修改用户状态
 
-### PUT /api/user/{targetUserId}/state
+**PUT** `/api/user/{targetUserId}/state`
 
-**功能说明**：修改指定用户的状态（仅作者 `level=0` 或管理员 `level=1` 可操作）
+修改指定用户的状态，仅作者或管理员可操作。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| targetUserId | Long | 是 | 目标用户ID |
+**路径参数**：`targetUserId`（Long）
 
-**请求参数**（JSON）：
-```json
-{
-  "state": 2
-}
-```
+**请求参数**（JSON Body）
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| state | Byte | 是 | 新状态（0=正常，1=逻辑删除，2=黑名单） |
+| state | Byte | 是 | 0=正常，1=逻辑删除，2=黑名单 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -402,38 +225,22 @@ Content-Type: application/json
 }
 ```
 
-**失败响应**：
-- 未授权（401）：未登录或Token无效
-- 无权限（403）：当前用户不是作者或管理员
-- 请求参数错误（400）：state 参数为空或无效
-- 资源不存在（404）：targetUserId 对应的用户不存在
-
-**业务逻辑**：
-1. 从 JWT 获取当前用户ID
-2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
-3. 查询目标用户是否存在
-4. 更新目标用户的 `state` 字段
-5. 更新 `updateTime` 字段
+**失败响应**：401/403/400/404。
 
 ---
 
-## 7. 根据用户ID获取昵称接口
+### 8. 根据用户 ID 获取昵称
 
-### GET /api/user/{userId}/nickname
+**GET** `/api/user/{userId}/nickname`
 
-**功能说明**：根据用户ID获取用户的昵称。
+根据用户 ID 查询昵称。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| userId | Long | 是 | 用户ID |
+**路径参数**：`userId`（Long）
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -443,37 +250,27 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**失败响应**：
-- 未授权（401）：未登录或Token无效
-- 资源不存在（404）：userId 对应的用户不存在
-- 请求参数错误（400）：userId 为空或无效
-
-**业务逻辑**：
-1. 验证 userId 参数
-2. 查询用户信息
-3. 返回用户的 `nickName` 字段
-4. 如果用户不存在，返回 404
+**失败响应**：401 未授权；404 用户不存在；400 参数错误。
 
 ---
 
-## 8. 获取用户列表接口
+### 9. 获取用户列表
 
-### GET /api/user/list
+**GET** `/api/user/list`
 
-**功能说明**：分页获取用户列表（仅作者 `level=0` 可操作）。返回的用户列表不包含作者（`level=0`）用户。
+分页获取用户列表，仅作者可操作；列表不包含作者账号。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**查询参数**：
+**查询参数**
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| page | Integer | 否 | 页码（默认1） |
-| size | Integer | 否 | 每页数量（默认20，最大100） |
+| page | Integer | 否 | 页码，默认 1 |
+| size | Integer | 否 | 每页条数，默认 20，最大 100 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -493,157 +290,39 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**字段说明**：
-| 字段名 | 类型 | 说明 |
-|--------|------|------|
-| total | Long | 总记录数 |
-| list | List | 用户列表 |
-| list[].id | Long | 用户ID |
-| list[].nickName | String | 用户昵称 |
-| list[].level | Byte | 用户等级（0=作者，1=管理员，2=普通用户，3=游客） |
-| list[].state | Byte | 用户状态（0=正常，1=逻辑删除，2=黑名单） |
-
-**失败响应**：
-- 未授权（401）：未登录或Token无效
-- 无权限（403）：当前用户不是作者
-
-**业务逻辑**：
-1. 从 JWT 获取当前用户ID
-2. 校验当前用户权限（必须是 `level=0` 作者）
-3. 查询用户列表（排除 `level=0` 的作者用户）
-4. 仅返回 `id`、`nickName`、`level`、`state` 字段
-5. 按 `id` 升序排序
-6. 分页返回结果
+**失败响应**：401 未授权；403 无权限（非作者）。
 
 ---
 
-## 响应状态码说明
+## 二、媒体
 
-### 通用状态码
-- `200`: 成功
-- `400`: 请求参数错误
-- `401`: 未授权（未登录或Token过期）
-- `403`: 无权限
-- `404`: 资源不存在
-- `500`: 服务器内部错误
+**游客模式**：未登录可访问以下接口，无需携带 `Authorization`：  
+`GET /api/mediaVisible/list`、`GET /api/media/{id}`、`GET /api/media/{id}/download`、`GET /api/mediaVisible/{mediaId}/zones`、`GET /api/mediaVisible/rank`。其余写操作及「我的上传」、审核等需登录。
 
-### 业务状态码
-- `4001`: 用户名已存在
-- `4002`: 用户名或密码错误 / 密码错误
-- `4003`: Token无效或已过期
-- `4007`: 用户已被注销
-- `4008`: 用户已被拉黑
-- `4009`: 手机号已被注册
-- `4010`: 手机号格式不正确
+**媒体 state**：0=正常，1=正在上传，2=上传成功，3=上传失败，4=正在删除，5=已删除，6=待审核，7=审核未通过。
 
 ---
 
-## 数据状态说明
+### 1. 准备上传
 
-### 用户状态（state字段）
-- `0`: 正常状态
-- `1`: 已注销（逻辑删除）
-- `2`: 已拉黑
+**POST** `/api/media/upload`
 
-### 用户等级（level字段）
-- `0`: 作者
-- `1`: 管理员
-- `2`: 普通用户（注册时默认）
-- `3`: 游客
+两阶段上传之第一阶段：校验参数与 file_hash 幂等，落库 media（state=1），返回 mediaId、storagePath、uploadUrl 及可选 stsCredentials；不接收主文件与封面，主文件由前端直传 OSS。
 
----
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: multipart/form-data`
 
-## 数据保留策略
+**请求参数**（multipart/form-data）
 
-### 注销用户的数据
-- **保留策略**：用户注销后（state=1），其数据（媒体、树洞等）**保留**，其他用户仍可查看
-- **显示标识**：前端可显示"已注销用户"标识
-
-### 拉黑用户的数据
-- **清理策略**：用户被拉黑后（state=2），其数据需要**清理**（具体清理策略待后续确定）
-
----
-
-## 安全说明
-
-1. **密码加密**：所有密码使用BCrypt算法加密存储，不可逆
-2. **JWT Token**：登录成功后返回JWT Token，后续请求需在Header中携带
-3. **Token格式**：`Authorization: Bearer <token>`
-4. **密码验证**：注销时需要密码二次确认，确保操作安全
-5. **手机号唯一性**：手机号不允许重复，用于防止恶意用户重复注册
-
----
-
-## 接口测试建议
-
-### 测试工具
-- Postman
-- Apifox
-- curl命令
-
-### 测试顺序
-1. 先测试注册接口
-2. 使用注册的用户测试登录接口
-3. 使用登录返回的Token测试注销接口
-
----
-
----
-
-## 媒体服务接口设计
-
-### 接口路径规范
-所有媒体相关接口统一使用前缀：`/api/media/`（列表为 `/api/mediaVisible/list`）。
-
-### 游客模式
-系统支持游客模式：**未登录**用户可访问以下接口，**无需**携带请求头 `Authorization`：
-- `GET /api/mediaVisible/list`：查看公共区（currentUserId=0）或专区媒体列表
-- `GET /api/media/{id}`：查看媒体详情
-- `GET /api/media/{id}/download`：获取下载预签名 URL
-
-上传、更新、删除、我的上传列表等操作仍需登录。
-
-### 媒体状态说明
-媒体（media）的状态（state）字段定义如下：
-- `state=0`：正常（已审核通过，可公开查看）
-- `state=1`：正在上传
-- `state=2`：上传成功
-- `state=3`：上传失败
-- `state=4`：正在删除
-- `state=5`：已删除
-- `state=6`：待审核（上传完成后进入此状态，等待管理员/作者审核）
-- `state=7`：审核未通过（审核被驳回）
-
----
-
-## 1. 上传媒体资源（两阶段：准备 → 前端直传 OSS → 通知结果）
-
-上传流程为：前端先调「准备上传」接口（带 `file_hash`），后端落库并返回 OSS 存储路径**以及前端直传 OSS 所需的上传 URL / 凭证**；前端使用该上传 URL（或基于返回的凭证初始化 OSS SDK）直传文件到 OSS；上传完成后前端调「通知上传结果」接口，后端校验 OSS 后执行后续逻辑。详见 `docs/upload_in_blocks.md`。
-
-### 1.1 准备上传接口
-
-### POST /api/media/upload
-
-**功能说明**：参数校验、幂等校验（基于前端传来的 `file_hash`）、落库 Media（state=1）、生成 OSS 存储路径；返回 mediaId、storagePath，以及用于前端直传 OSS 的上传 URL / 凭证（如预签名 PUT URL）。**不接收主文件**，主文件由前端直传 OSS。
-
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: multipart/form-data
-```
-
-**请求参数**（multipart/form-data）：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| file_hash | String | 是 | 前端计算的文件 hash，用于后端幂等校验和media数据落库；后端不计算 |
+| file_hash | String | 是 | 前端计算的文件 hash，用于幂等 |
 | category | Byte | 是 | 0=图片，1=视频 |
-| title | String | 否 | 标题（可选） |
-| description | String | 否 | 描述（可选） |
-| filename | String | 否 | 原始文件名（用于生成存储路径扩展名；缺省时按 category 用 .jpg/.mp4） |
+| title | String | 否 | 标题 |
+| description | String | 否 | 描述 |
+| filename | String | 否 | 原始文件名（缺省按 category 用 .jpg/.mp4） |
 
-**说明**：不传主文件（file）、不传封面（cover）；前端在收到本接口响应后，使用返回的 `storagePath` 与上传 URL / 凭证直传文件到 OSS（例如对预签名 PUT URL 直接发起 PUT 请求，或基于返回的配置初始化 OSS Browser SDK）；封面与可见范围（visibleUserIds）均在「通知上传结果」时提交。
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -651,7 +330,7 @@ Content-Type: multipart/form-data
   "data": {
     "mediaId": 1,
     "storagePath": "images/2026/01/21/abc123-test.jpg",
-    "uploadUrl": "https://dragons-media.oss-cn-beijing.aliyuncs.com/images/2026/01/21/abc123-test.jpg?Expires=...&OSSAccessKeyId=...&Signature=...",
+    "uploadUrl": "https://...?Expires=...&OSSAccessKeyId=...&Signature=...",
     "uploadUrlExpireSeconds": 3600,
     "stsCredentials": {
       "accessKeyId": "...",
@@ -659,62 +338,38 @@ Content-Type: multipart/form-data
       "securityToken": "...",
       "expiration": 1771866228,
       "region": "oss-cn-beijing",
-      "bucket": "dragons-media"
+      "bucket": "media"
     }
   },
   "timestamp": 1705564800000
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
-| mediaId | 已落库的 Media 主键，通知上传结果时必带 |
-| storagePath | OSS 中的存储路径（对象 key），前端直传时使用该路径（小文件 PUT 用 uploadUrl，大文件分片用 OSS SDK + stsCredentials） |
-| uploadUrl | 用于前端直传的预签名 PUT URL（小文件可直接对该地址发起 PUT，body 为文件内容） |
-| uploadUrlExpireSeconds | `uploadUrl` 的有效期（秒） |
-| stsCredentials | 可选。STS 临时凭证（后端配置了 oss.sts 时返回），供前端使用 OSS SDK 做分片上传等；含 accessKeyId、accessKeySecret、securityToken、expiration、region、bucket |
-
-**失败响应**：
-- 未授权（401）：同上
-- 请求参数错误（400）：同上
-- 文件格式不支持（4005）：根据 category 与扩展名（可由前端在其它字段传递或由业务约定）校验
-- 幂等命中：若 `file_hash` 已存在且对应 media 已存在，可按业务约定返回 200 并返回该 media 信息，或返回 4xx
-
-**业务逻辑**：
-1. 验证 JWT 并获取当前用户ID
-2. 参数校验：校验 category 等请求参数（不涉及封面，封面在「通知上传结果」阶段提交）
-3. **幂等校验**：根据前端传来的 `file_hash` 判断是否已存在同 hash 的 media（按现有幂等规则），若已存在则按约定返回
-4. 生成 OSS 存储路径（格式与现有一致，如 `{category}/yyyy/MM/dd/{uuid}-{filename}`，filename 可由前端传或由扩展名约定）
-5. 落库 Media（state=1 正在上传），仅写入 storagePath、fileHash、category、title、description 等，**不写入 coverPath**
-6. 调用对象存储服务生成上传用预签名 URL（HTTP PUT），得到 `uploadUrl`，并约定有效期 `uploadUrlExpireSeconds`
-7. 若配置了 STS（oss.sts.role-arn），调用 STS 获取临时凭证，放入响应 `stsCredentials`；未配置则不返回该字段或为 null
-8. 返回 mediaId、storagePath、uploadUrl、uploadUrlExpireSeconds、stsCredentials（可选）等，**不接收、不上传主文件，也不接收、不上传封面**
+**失败响应**：401 未授权；400 参数错误；4005 文件格式不支持；幂等命中时可能返回 200（已有 media）或 4xx。
 
 ---
 
-### 1.2 通知上传结果接口
+### 2. 通知上传结果
 
-### POST /api/media/upload/complete
+**POST** `/api/media/upload/complete`
 
-**功能说明**：前端在直传 OSS 成功或失败后调用此接口；后端先校验 OSS 上该对象是否真实存在（成功时），再按成功/失败执行后续逻辑。**封面（cover）可不填**。上传视频且不填 cover 时：由前端抽取第一帧作为封面；若抽取失败则使用 OSS 中的默认封面路径；若 OSS 访问失败则降级使用本地存储的默认封面路径。若传了 cover，后端校验文件类型合规后计算 coverPath、落库并上传到 OSS。
+两阶段上传之第二阶段：前端直传 OSS 成功或失败后调用；success=true 时后端校验 OSS 对象存在后写 media_visible、处理封面并将 state 置为 6（待审核）。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: multipart/form-data
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: multipart/form-data`
 
-**请求参数**（multipart/form-data）：
+**请求参数**（multipart/form-data）
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| mediaId | Long | 是 | 准备上传时返回的 Media 主键 |
+| mediaId | Long | 是 | 准备上传返回的 mediaId |
 | success | Boolean | 是 | true=上传成功，false=上传失败 |
-| visibleUserIds | String | 是 | JSON数组字符串，例如 `[1,2,3]` 或 `[]`（必填，但可以为空数组）；success=true 时用于写 media_visible |
-| cover | File（二进制） | 否 | 封面图片文件；可不传。success=true 时若传了则后端校验类型合规后计算 coverPath、落库并上传到 OSS；视频不传时由前端抽第一帧或使用默认封面（见功能说明），success=false 时可不传 |
-| code | String | 否 | 失败时的错误码，便于日志 |
-| message | String | 否 | 失败时的描述，便于排查 |
+| visibleUserIds | String | 是 | JSON 数组字符串，如 `[1,2,3]` 或 `[]` |
+| cover | File | 否 | 封面图；视频可不传（由前端抽第一帧或默认封面） |
+| code | String | 否 | 失败时错误码 |
+| message | String | 否 | 失败时描述 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -724,47 +379,29 @@ Content-Type: multipart/form-data
 }
 ```
 
-**失败响应**：未授权（401）、资源不存在（404）、请求参数错误（400）、文件格式不支持（4005）等。
-
-**业务逻辑**：
-1. 验证 JWT 并获取当前用户ID；校验 media 存在且归属当前用户
-2. **幂等**：若该 media 当前 **state != 1**（已处理过），直接返回 200，不再重复执行后续逻辑
-3. **success = true**：
-   - **先校验 OSS**：根据 media 的 storagePath 检查 OSS 上该对象是否存在（如 HEAD 或 GET 元数据），**不存在则视为失败**，将 state 置为 3，不执行后续写库
-   - 校验通过后：将 media.state 更新为 2（上传成功）；写 media_visible（与现有规则一致）
-   - **封面处理**：cover 可不填。图片未传 cover 时主文件即封面；视频未传 cover 时由前端抽取第一帧作为封面，抽取失败则用 OSS 默认封面路径，OSS 访问失败则降级用本地默认封面路径。若传了 cover，校验文件类型合规（仅允许图片格式），计算 coverPath（如 `images/covers/yyyy/MM/dd/{uuid}.{ext}`），将 coverPath 落库到 media，再将 cover 上传到 OSS；封面上传失败不影响主流程（可选降级）
-   - 将 state 更新为 6（待审核）；失效缓存等
-4. **success = false**：将 media.state 置为 3（上传失败）；若 OSS 上已有该对象可择机清理
-5. 成功/失败逻辑与现有「上传成功」「上传失败」处理一致（media_visible、封面、缓存等）
-
-**注意**：上传完成后媒体状态为 `state=6`（待审核），需审核通过后才能公开显示（`state=0`）。
+**失败响应**：401/404/400/4005。
 
 ---
 
-## 2. 更新媒体基础信息接口（不改文件/不改封面/不改可见范围）
+### 3. 更新媒体基础信息
 
-### PUT /api/media/{id}
+**PUT** `/api/media/{id}`
 
-**功能说明**：更新媒体的标题与描述（仅上传者本人；允许 `state=0`、`state=6`、`state=7` 更新）
+更新媒体标题与描述（不改文件、封面、可见范围）；仅上传者本人，且 state 为 0/6/7 时可更新；修改后状态重置为待审核（6）。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/x-www-form-urlencoded
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/x-www-form-urlencoded`
 
-**路径参数**：
+**路径参数**：`id`（Long，媒体 ID）
+
+**请求参数**（form 或 x-www-form-urlencoded）
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| id | Long | 是 | 媒体ID |
+| title | String | 否 | 标题 |
+| description | String | 否 | 描述 |
 
-**请求参数**（form-data 或 x-www-form-urlencoded）：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| title | String | 否 | 标题（可选） |
-| description | String | 否 | 描述（可选） |
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -779,38 +416,26 @@ Content-Type: application/x-www-form-urlencoded
 }
 ```
 
-**业务逻辑**：
-1. 校验JWT并获取当前用户ID
-2. 查询media并校验所有权（上传者本人）
-3. 校验 media.state 为 0（正常）、6（待审核）或 7（审核未通过）才允许修改基础信息
-4. 更新 `title/description/updateTime` 写库
-5. 修改成功后自动将状态重置为 `state=6`（待审核），需要重新审核（包括原 `state=0/6/7`）
-
 ---
 
-## 3. 更新视频封面接口（独立操作）
+### 4. 更新视频封面
 
-### PUT /api/media/{id}/cover
+**PUT** `/api/media/{id}/cover`
 
-**功能说明**：上传新封面并更新数据库（仅上传者本人；仅 `state=0`；仅视频允许）
+上传新封面并更新数据库；仅上传者本人、仅视频文件且 state=0。先上传对象存储再更新 DB，DB 失败则补偿删除对象存储中的新封面。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: multipart/form-data
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: multipart/form-data`
 
-**路径参数**：
+**路径参数**：`id`（Long）
+
+**请求参数**（multipart/form-data）
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| id | Long | 是 | 媒体ID |
+| cover | File | 是 | 封面图片 |
 
-**请求参数**（multipart/form-data）：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| cover | MultipartFile | 是 | 封面图片 |
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -818,53 +443,36 @@ Content-Type: multipart/form-data
   "data": {
     "mediaId": 1,
     "coverPath": "covers/2026/01/31/abc123-cover.jpg",
-    "coverUrl": "http://localhost:9000/dragons-media/covers/2026/01/31/abc123-cover.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
+    "coverUrl": "http://...?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
   },
   "timestamp": 1705564800000
 }
 ```
 
-**字段说明**：
-- `coverPath`：封面对象存储路径
-- `coverUrl`：封面预签名 URL（2 小时有效），用于前端更新成功后立即刷新预览；若无法生成则可能为空（例如对象不存在）
-
-**业务逻辑**：
-1. 校验JWT并获取当前用户ID
-2. 查询media并校验所有权（上传者本人）
-3. 校验 media.category=1（视频）、media.state=0
-4. 先上传封面到MinIO
-5. 再更新DB中的 `media.coverPath`，并将 `media.state` 重置为 `state=6`（待审核）
-6. 若DB更新失败，补偿删除MinIO中新上传的封面对象，并返回失败
-
 ---
 
-## 4. 修复/重建媒体可见范围接口（独立操作，差量同步）
+### 5. 修复/重建媒体可见范围
 
-### PUT /api/media/{id}/visible
+**PUT** `/api/media/{id}/visible`
 
-**功能说明**：仅更新 `media_visible` 表，用于“成员专区筛选”（仅上传者本人；事务保证删除与新增的原子性）
+仅更新 media_visible 表，用于成员专区筛选；仅上传者本人；差量同步，利用事务保证原子性；visibleUserIds 最多 12 个，对应 12 名后浪成员。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/x-www-form-urlencoded
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/x-www-form-urlencoded`
 
-**路径参数**：
+**路径参数**：`id`（Long）
+
+**请求参数**
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| id | Long | 是 | 媒体ID |
+| visibleUserIds | String | 是 | JSON 数组字符串，如 `[1,2,3]` 或 `[]`，最多 12 个 |
 
-**请求参数**（form-data 或 x-www-form-urlencoded）：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| visibleUserIds | String | 是 | JSON数组字符串，例如 `[1,2,3]` 或 `[]`（必填，但可为空数组；最多12个元素） |
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
-  "message": "可见范围修复成功",
+  "message": "标签更新成功",
   "data": {
     "mediaId": 1,
     "storagePath": "images/2026/01/21/abc123-test.jpg",
@@ -875,92 +483,45 @@ Content-Type: application/x-www-form-urlencoded
 }
 ```
 
-**业务逻辑（差量同步）**：
-1. 校验JWT并获取当前用户ID
-2. 查询media并校验所有权（上传者本人）
-3. 查询当前 `media_visible` 的旧集合 oldSet
-4. 将入参 `visibleUserIds` 去重得到 newSet
-5. 计算：
-   - toAdd = newSet - oldSet
-   - toRemove = oldSet - newSet
-6. 事务内：删除 toRemove、插入 toAdd（任何一步失败则整体回滚）
-7. **补救逻辑**：若媒体当前为 `state=2`（上传成功但不可见，通常是 upload 阶段写入 `media_visible` 失败导致），则在本次修复成功后将 `media.state` 修正为 `state=0`（正常可查看），并更新 `updateTime`
-8. 除 `state=2 → 0` 的补救场景外，**不修改 `media` 的其他字段**；标签仅用于“专区筛选”，不影响审核状态
-
 ---
 
-## 5. 获取媒体下载URL接口
+### 6. 获取媒体下载 URL
 
-### GET /api/media/{id}/download
+**GET** `/api/media/{id}/download`
 
-**功能说明**：获取媒体资源的预签名下载URL（有效期 5 分钟）。支持游客模式，无需请求头。
+获取媒体预签名下载 URL（有效期 5 分钟）。游客仅可获取 state=0（公开）的媒体资源；登录后上传者本人或作者/管理员可获取 state=0/6/7（审核预览）。
 
-**访问规则（补充：审核预览）**：
-- **游客 / 未登录**：仅允许获取 `state=0`（已审核通过）的媒体下载/播放 URL
-- **已登录上传者本人**：允许获取 `state=0/6/7`
-- **已登录作者/管理员（level=0/1）**：允许获取 `state=0/6/7`（用于资源审核流程中的视频/图片预览）
+**路径参数**：`id`（Long）
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| id | Long | 是 | 媒体ID |
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
   "message": "获取成功",
   "data": {
-    "downloadUrl": "http://localhost:9000/dragons-media/images/2026/01/21/abc123.jpg?X-Amz-Algorithm=...&X-Amz-Expires=300&..."
+    "downloadUrl": "http://...?X-Amz-Algorithm=...&X-Amz-Expires=300&..."
   },
   "timestamp": 1705564800000
 }
 ```
 
-**失败响应**：
-- 资源不存在（404）：
-```json
-{
-  "code": 404,
-  "message": "资源不存在",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-**业务逻辑**：
-1. 查询数据库中的media记录
-2. 按“访问规则”校验资源 state 与身份：
-   - 游客：仅 `state=0`
-   - 上传者本人：`state=0/6/7`
-   - 作者/管理员：`state=0/6/7`（审核预览）
-3. 检查MinIO中文件是否实际存在（防止缓存不一致）
-4. 生成预签名URL（有效期 5 分钟，300 秒）
-5. 返回URL给前端，前端可重定向下载
-
-**注意**：
-- 游客模式下的“可下载”仍以 `state=0` 为准
-- 审核预览场景下（作者/管理员已登录），待审核/驳回资源也允许获取预签名 URL，用于前端在审核列表中播放完整视频内容
+**失败响应**：404 资源不存在。
 
 ---
 
-## 6. 删除媒体资源接口
+### 7. 删除媒体资源
 
-### DELETE /api/media/{id}/delete
+**DELETE** `/api/media/{id}/delete`
 
-**功能说明**：删除媒体资源（仅允许上传者本人删除）
+删除媒体（仅上传者本人或作者/管理员）。流程：state→4，删 media_visible 与对象存储，再物理删除 media 表记录；除修改 state 失败会报错外，其他操作均不会报错，会保留 state=4 供用户感知，以再次调用，同时保证了幂等。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| id | Long | 是 | 媒体ID |
+**路径参数**：`id`（Long）
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -970,61 +531,27 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**失败响应**：
-- 未授权（401）：
-```json
-{
-  "code": 401,
-  "message": "未授权，请先登录",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-- 资源不存在（404）：
-```json
-{
-  "code": 404,
-  "message": "资源不存在",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-**业务逻辑**（物理删除 media 表行）：
-1. 从JWT Token获取当前用户ID
-2. 查询 media 记录并校验所有权（media.uploader_id 与当前用户ID一致）
-3. 如果无权限或资源不存在，返回404（不暴露资源是否存在）
-4. 将 media.state 置为 4（正在删除）并写库（若已为 state=4，允许重复调用该接口继续收尾）
-5. 删除 media_visible 记录（where media_id = ?；若本就不存在记录，视为幂等成功）
-6. 删除 MinIO 中的主文件与封面（若与主文件路径不同）
-7. 删除相关缓存后，物理删除 media 表记录（DELETE）
-
-**注意**：
-- 仅允许上传者本人删除（通过 JWT 中的 userId 校验）；作者/管理员（level=0/1）也可删除
-- media 表行为**物理删除**：先 state=4，删 media_visible 与 MinIO，再执行物理 DELETE 删除 media 行
-- MinIO 删除在删除 media_visible 之后、物理删除 media 之前执行；若 MinIO 删除失败，不影响业务正确性（最多遗留垃圾文件）
-- **删除接口幂等**：若某次删除执行到一半失败导致 state=4，可再次调用删除接口继续清理 media_visible/MinIO 并完成物理删除
+**失败响应**：401 未授权；404 资源不存在。
 
 ---
 
-## 7. 获取媒体列表接口（专区筛选）
+### 8. 获取媒体列表（标签筛选）
 
-### GET /api/mediaVisible/list
+**GET** `/api/mediaVisible/list`
 
-**功能说明**：获取媒体列表，用于首页/公共区/成员专区的媒体浏览。支持游客模式，无需请求头。
+分页获取媒体列表，支持公共区与成员专区；仅返回 state=0（已审核通过）。游客可访问。
 
-**请求头**：无需（游客可访问）；若已登录也可携带 JWT。
+**查询参数**
 
-**查询参数**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| page | Integer | 否 | 页码（默认1） |
-| size | Integer | 否 | 每页数量（默认10，最大100） |
-| category | Byte | 否 | 类型筛选（0=图片，1=视频） |
-| currentUserId | Long | 否 | **专区ID**：0=公共区；成员ID=成员专区（默认0） |
+| page | Integer | 否 | 页码，默认 1 |
+| size | Integer | 否 | 每页条数，默认 10，最大 100 |
+| category | Byte | 否 | 0=图片，1=视频 |
+| currentUserId | Long | 否 | 0=公共区，成员 ID=该成员专区，默认 0 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -1038,7 +565,7 @@ Authorization: Bearer <JWT_TOKEN>
         "title": "标题（可为空）",
         "coverPath": "images/2026/01/21/xxx.jpg",
         "updateTime": "2026-01-31T12:34:56",
-        "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
+        "coverUrl": "http://...?X-Amz-Expires=7200&..."
       }
     ]
   },
@@ -1046,36 +573,18 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**字段说明**：
-- `coverUrl`：封面预签名 URL（2 小时有效），用于公共区/成员专区列表直接展示缩略图；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
-- `updateTime`：最近更新时间（用于前端按时间排序/展示）
-
-**业务逻辑**：
-1. 仅返回 `state=0`（正常可查看，已审核通过）的媒体；不显示 `state=6`（待审核）和 `state=7`（审核未通过）的媒体；列表项不包含 state 字段（无需登录即可调用）
-2. 根据 `currentUserId`（专区ID）做筛选：
-   - `currentUserId=0`：公共区，直接查询 `media`（不依赖 `media_visible`）
-   - `currentUserId=成员ID`：成员专区，通过 `media_visible.user_id = currentUserId` 做筛选
-3. 按更新时间倒序、id 倒序分页返回
-
-**注意**：
-- `currentUserId` 在此处表达“专区筛选”，不是会员权限控制
-
 ---
 
-## 8. 获取媒体详情接口
+### 9. 获取媒体详情
 
-### GET /api/media/{id}
+**GET** `/api/media/{id}`
 
-**功能说明**：获取媒体详情（用于点击列表项进入详情页）。支持游客模式，无需请求头。
+获取媒体详情。游客仅可查看 state=0；登录后上传者本人或作者/管理员可查看 state=0/6/7。
 
-**请求头**：无需（游客可访问）；若已登录也可携带 JWT。
+**路径参数**：`id`（Long）
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| id | Long | 是 | 媒体ID |
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1087,7 +596,7 @@ Authorization: Bearer <JWT_TOKEN>
     "description": "描述（可为空）",
     "storagePath": "images/2026/01/21/xxx.jpg",
     "coverPath": "images/2026/01/21/xxx.jpg",
-    "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&...",
+    "coverUrl": "http://...?X-Amz-Expires=7200&...",
     "uploaderId": 1,
     "updateTime": "2026-01-31T12:34:56"
   },
@@ -1095,49 +604,28 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**字段说明**：
-- `coverUrl`：封面预签名 URL（2 小时有效），用于详情页/弹窗直接展示封面；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
-
-**失败响应**：
-- 资源不存在（404）：
-```json
-{
-  "code": 404,
-  "message": "资源不存在",
-  "data": null,
-  "timestamp": 1705564800000
-}
-```
-
-**业务逻辑**：
-1. 查询 `media` 记录
-2. 若未登录（游客）：仅允许查看 `state=0`（正常可查看，已审核通过）的媒体；`state=6/7` 返回 404
-3. 若已登录且为上传者本人：允许查看 `state=0/6/7`（用于查看违规原因并做修改）
-4. 若已登录且为作者/管理员（level=0/1）：允许查看 `state=0/6/7`（用于审核流程中的预览与核对）
-4. 若 `coverPath` 存在且对象存储中对象存在，则生成 `coverUrl`（预签名 URL，2 小时有效）
-5. 返回媒体详情字段（供前端展示与后续下载/删除操作）
+**失败响应**：404 资源不存在。
 
 ---
 
-## 9. 获取“我的上传”列表接口
+### 10. 获取「我的上传」列表
 
-### GET /api/mediaVisible/my/list
+**GET** `/api/mediaVisible/my/list`
 
-**功能说明**：上传者本人管理自己上传内容的列表（不依赖 `media_visible`）。
+上传者本人查看自己上传的媒体列表（含待审核、审核未通过，排除 state=5 已删除，）。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**查询参数**：
+**查询参数**
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| page | Integer | 否 | 页码（默认1） |
-| size | Integer | 否 | 每页数量（默认10，最大100） |
-| category | Byte | 否 | 类型筛选（0=图片，1=视频） |
+| page | Integer | 否 | 默认 1 |
+| size | Integer | 否 | 默认 10，最大 100 |
+| category | Byte | 否 | 0=图片，1=视频 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -1151,7 +639,7 @@ Authorization: Bearer <JWT_TOKEN>
         "title": "标题（可为空）",
         "coverPath": "images/2026/01/21/xxx.jpg",
         "updateTime": "2026-01-31T12:34:56",
-        "coverUrl": "http://localhost:9000/dragons-media/images/2026/01/21/xxx.jpg?X-Amz-Algorithm=...&X-Amz-Expires=7200&..."
+        "coverUrl": "http://...?X-Amz-Expires=7200&..."
       }
     ]
   },
@@ -1159,31 +647,18 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**字段说明**：
-- `coverUrl`：封面预签名 URL（2 小时有效），用于“我的上传”列表直接展示缩略图；若无法生成则可能为空（例如对象不存在或 coverPath 为空）
-- `updateTime`：最近更新时间（用于前端按时间排序/展示）
-
-**业务逻辑**：
-1. 从 JWT 获取当前用户ID（上传者ID）
-2. 查询 `media`：`uploader_id = 当前用户ID` 且 `state != 5`（排除已删除状态，显示包括 `state=0`正常、`state=6`待审核、`state=7`审核未通过等所有状态）
-3. 按 updateTime、id 倒序分页返回
-
 ---
 
-## 10. 查询媒体所属成员专区接口
+### 11. 查询媒体所属成员专区
 
-### GET /api/mediaVisible/{mediaId}/zones
+**GET** `/api/mediaVisible/{mediaId}/zones`
 
-**功能说明**：根据媒体ID查询该媒体属于哪些成员专区。支持游客模式，无需请求头。
+根据媒体 ID 返回该媒体所在的成员专区 ID 列表；仅公共区可见时返回空数组。游客可访问。
 
-**请求头**：无需（游客可访问）；若已登录也可携带 JWT。
+**路径参数**：`mediaId`（Long）
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| mediaId | Long | 是 | 媒体ID |
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1193,48 +668,28 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**说明**：
-- 返回成员专区ID列表（`user_id`）
-- 如果媒体只在公共区可见（`media_visible` 表中没有记录），返回空数组 `[]`
-- 如果返回 `[1, 2, 3]`，表示该媒体在成员1、成员2、成员3的专区可见
-
-**失败响应**：
-- 请求参数错误（400）：mediaId 为空
-
-**业务逻辑**：
-1. 根据 `mediaId` 查询 `media_visible` 表
-2. 返回所有匹配的 `user_id` 列表（成员专区ID）
-3. 如果媒体只在公共区可见（`media_visible` 表中没有记录），返回空列表
+**失败响应**：400 mediaId 无效。
 
 ---
 
-## 11. 媒体审核接口
+### 12. 审核通过
 
-### 10.1 审核通过接口
+**POST** `/api/media/audit/approve`
 
-### POST /api/media/audit/approve
+批量将媒体从待审核（state=6）改为正常（state=0）；仅作者或管理员；非事务，返回失败项列表。
 
-**功能说明**：批量审核通过媒体，将媒体状态从 `state=6`（待审核）改为 `state=0`（正常）。仅管理员（`level=1`）或作者（`level=0`）可操作。
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/json`
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
-
-**请求参数**（JSON）：
-```json
-{
-  "mediaIds": [1, 2, 3]
-}
-```
+**请求参数**（JSON Body）
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| mediaIds | List<Long> | 是 | 要审核通过的媒体ID列表 |
+| mediaIds | List&lt;Long&gt; | 是 | 媒体 ID 列表 |
 
-**成功响应**（200）：
-- 全部成功：
+**成功响应（200）**
+
+全部成功示例：
+
 ```json
 {
   "code": 200,
@@ -1246,72 +701,26 @@ Content-Type: application/json
 }
 ```
 
-- 部分失败：
-```json
-{
-  "code": 200,
-  "message": "部分审核通过失败",
-  "data": {
-    "failedItems": [
-      {
-        "mediaId": 2,
-        "title": "媒体标题"
-      },
-      {
-        "mediaId": 999,
-        "title": "媒体id999不存在"
-      }
-    ]
-  },
-  "timestamp": 1705564800000
-}
-```
+部分失败时 `data.failedItems` 为 `[{ "mediaId": 2, "title": "媒体标题" }, { "mediaId": 999, "title": "媒体id999不存在" }]`，message 为「部分审核通过失败」。
 
-**失败响应**：
-- 未授权（401）
-- 无审核权限（4022）：当前用户不是管理员或作者
-
-**业务逻辑**：
-1. 校验JWT并获取当前用户ID
-2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
-3. 批量处理媒体ID列表：
-   - 如果媒体不存在，记录到失败列表（`title: "媒体id{media_id}不存在"`）
-   - 如果媒体状态不是 `state=6`（待审核），记录到失败列表
-   - 否则，将媒体状态更新为 `state=0`（正常）
-   - 如果更新失败，记录到失败列表
-4. 返回结果，包含失败项列表（如果有）
-
-**注意**：
-- 该方法**非事务性**：部分成功时不会回滚已成功的操作
-- 失败项会详细记录媒体ID和标题（或"媒体id{media_id}不存在"），便于管理员查看
+**失败响应**：401 未授权；4022 无审核权限。
 
 ---
 
-### 10.2 审核驳回接口
+### 13. 审核驳回
 
-### POST /api/media/audit/reject
+**POST** `/api/media/audit/reject`
 
-**功能说明**：批量审核驳回媒体，将媒体状态从 `state=6`（待审核）改为 `state=7`（审核未通过）。仅管理员（`level=1`）或作者（`level=0`）可操作。
+批量将媒体从待审核（state=6）改为审核未通过（state=7）；仅作者或管理员；非事务，返回失败项列表。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/json`
 
-**请求参数**（JSON）：
-```json
-{
-  "mediaIds": [1, 2, 3]
-}
-```
+**请求参数**（JSON Body）：`mediaIds`（List&lt;Long&gt;，必填）
 
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| mediaIds | List<Long> | 是 | 要审核驳回的媒体ID列表 |
+**成功响应（200）**
 
-**成功响应**（200）：
-- 全部成功：
+全部成功：
+
 ```json
 {
   "code": 200,
@@ -1323,65 +732,30 @@ Content-Type: application/json
 }
 ```
 
-- 部分失败：
-```json
-{
-  "code": 200,
-  "message": "部分审核驳回失败",
-  "data": {
-    "failedItems": [
-      {
-        "mediaId": 2,
-        "title": "媒体标题"
-      },
-      {
-        "mediaId": 999,
-        "title": "媒体id999不存在"
-      }
-    ]
-  },
-  "timestamp": 1705564800000
-}
-```
+部分失败时结构同审核通过，`data.failedItems` 含失败项。
 
-**失败响应**：
-- 未授权（401）
-- 无审核权限（4022）：当前用户不是管理员或作者
-
-**业务逻辑**：
-1. 校验JWT并获取当前用户ID
-2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
-3. 批量处理媒体ID列表：
-   - 如果媒体不存在，记录到失败列表（`title: "媒体id{media_id}不存在"`）
-   - 如果媒体状态不是 `state=6`（待审核），记录到失败列表
-   - 否则，将媒体状态更新为 `state=7`（审核未通过）
-   - 如果更新失败，记录到失败列表
-4. 返回结果，包含失败项列表（如果有）
-
-**注意**：
-- 该方法**非事务性**：部分成功时不会回滚已成功的操作
-- 失败项会详细记录媒体ID和标题（或"媒体id{media_id}不存在"），便于管理员查看
+**失败响应**：401 未授权；4022 无审核权限。
 
 ---
 
-### 10.3 待审核媒体列表接口
+### 14. 待审核媒体列表
 
-### GET /api/media/audit/pending
+**GET** `/api/media/audit/pending`
 
-**功能说明**：分页查询待审核的媒体列表（`state=6`）。仅管理员（`level=1`）或作者（`level=0`）可访问。
+分页查询待审核（state=6）媒体列表；仅作者或管理员。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**请求参数**（Query参数）：
+**查询参数**
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| page | Integer | 否 | 页码，从1开始，默认1 |
-| size | Integer | 否 | 每页数量，默认10 |
+| page | Integer | 否 | 默认 1 |
+| size | Integer | 否 | 默认 10 |
+| category | Byte | 否 | 0=图片，1=视频 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -1408,39 +782,22 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**失败响应**：
-- 未授权（401）
-- 无审核权限（4022）：当前用户不是管理员或作者
-
-**业务逻辑**：
-1. 校验JWT并获取当前用户ID
-2. 校验当前用户权限（`level=0` 作者 或 `level=1` 管理员）
-3. 查询 `state=6`（待审核）的媒体列表
-4. 按 updateTime、id 倒序分页返回
+**失败响应**：401/4022。
 
 ---
 
-## 12. 点赞与排行榜接口
+### 15. 点赞
 
-**当前实现**：点赞/取消点赞采用「先 DB 再 Redis」已启用；Redis+MQ 方案（先 Redis → 发 MQ → 消费者事务落库，失败则回滚 Redis）已实现未启用。详见 Redis_DESIGN.md 与 development.md。排行榜读 Redis 取 Top N。
+**POST** `/api/media/{id}/like`
 
-### 12.1 点赞接口
+当前用户对指定媒体点赞；需登录；仅 state=0 可点赞；同一用户同一媒体仅可点赞一次（重复请求幂等成功）。
 
-### POST /api/media/{id}/like
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**功能说明**：当前用户对指定媒体点赞。需登录；同一用户对同一媒体仅可点赞一次（重复请求幂等或返回已点赞）。
+**路径参数**：`id`（Long，媒体 ID）
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**成功响应（200）**
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| id | Long | 是 | 媒体ID |
-
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1450,37 +807,22 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**失败响应**：
-- 未授权（401）
-- 资源不存在（404）：媒体不存在或非 state=0（未审核通过不可点赞）
-- 已点赞（可选 4xxx）：若采用“每人每条仅能点一次”则返回已点赞状态，由产品决定是否 200 幂等或 4xxx
-
-**业务逻辑**：
-1. 校验 JWT 并获取当前用户 ID
-2. 校验媒体存在且 state=0（仅已审核通过的媒体可被点赞）
-3. 若需防重复：检查当前用户是否已对该媒体点赞，已赞则幂等返回成功或返回“已点赞”
-4. **当前方案**：先落库“用户-媒体”点赞关系与 media.like_count，再更新 Redis（对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY 1，Lua 双 key 原子）
-5. Redis+MQ 方案（先 Redis 再 MQ 落库）已实现未启用，可按需切换
+**失败响应**：401 未授权；404 媒体不存在或非 state=0。
 
 ---
 
-### 12.2 取消点赞接口
+### 16. 取消点赞
 
-### POST /api/media/{id}/unlike
+**POST** `/api/media/{id}/unlike`
 
-**功能说明**：当前用户取消对指定媒体的点赞。需登录；未点赞过则幂等成功。
+当前用户取消对指定媒体的点赞；需登录；未点赞过则幂等成功。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| id | Long | 是 | 媒体ID |
+**路径参数**：`id`（Long）
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -1490,30 +832,22 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**失败响应**：未授权（401）、资源不存在（404）
-
-**业务逻辑**：
-1. 校验 JWT 并获取当前用户 ID
-2. 校验媒体存在且 state=0
-3. 若存在“用户-媒体”点赞关系则删除；若从未点赞则幂等返回成功
-4. **当前方案**：先落库删除点赞关系并更新 media.like_count，再更新 Redis（仅当当前 score > 0 时对 `media:rank:all` 与 `media:rank:{category}` 执行 ZINCRBY -1，Lua 原子，保证不为负）。Redis+MQ 方案已实现未启用
+**失败响应**：401/404。
 
 ---
 
-### 12.3 查询当前用户是否已赞某媒体接口（归属用户点赞记录）
+### 17. 查询当前用户是否已赞
 
-### GET /api/userLikeRecord/media/{mediaId}/status
+**GET** `/api/userLikeRecord/media/{mediaId}/status`
 
-**功能说明**：查询当前登录用户是否已对指定媒体点赞。用于媒体详情页展示「已点赞」或「点赞」按钮：若已赞则显示取消点赞按钮，再次点击则取消点赞；若未赞则显示点赞按钮。需登录。本接口归属**用户点赞记录**系列（前缀 `/api/userLikeRecord`），与点赞/取消点赞的媒体接口（`/api/media/{id}/like`、`/api/media/{id}/unlike`）配合使用。
+查询当前登录用户是否已对指定媒体点赞；需登录。data 为 true 表示已赞，false 表示未赞。
 
 **请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| mediaId | Long | 是 | 媒体ID |
+**路径参数**：`mediaId`（Long）
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -1522,32 +856,26 @@ Authorization: Bearer <JWT_TOKEN>
   "timestamp": 1705564800000
 }
 ```
-- `data: true` 已点赞，`data: false` 未点赞
 
-**失败响应**：未授权（401）、资源不存在（404）
-
-**业务逻辑**：
-1. 校验 JWT 并获取当前用户 ID
-2. 校验媒体存在且 state=0（仅已审核通过的媒体可查已赞状态）
-3. **查询流程**：只查 Redis bitmap `media:liked:{mediaId}`（GETBIT userId），位为 1 返回已赞；为 0 或 key 不存在视为未赞返回 false。当前点赞/取消点赞为先写 DB 再写 Redis，以 Redis 为准，不查 DB、不写回
+**失败响应**：401/404。
 
 ---
 
-### 12.4 热门排行榜接口
+### 18. 热门排行榜
 
-### GET /api/mediaVisible/rank
+**GET** `/api/mediaVisible/rank`
 
-**功能说明**：按点赞数从高到低返回热门媒体列表（Top N），不做分页、不做专区。游客可访问，无需请求头。
+按点赞数从高到低返回热门媒体 Top N；不做分页与专区；游客可访问。
 
-**请求头**：无需（游客可访问）；若已登录也可携带 JWT。
+**查询参数**
 
-**查询参数**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| category | String | 否 | 类型筛选：不传=全部，0=图片，1=视频 |
-| size | Integer | 否 | 返回条数，默认 20，最大 100 |
+| category | String | 否 | 不传=全部，0=图片，1=视频 |
+| size | Integer | 否 | 条数，默认 20，最大 100 |
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -1566,70 +894,34 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**字段说明**：`data` 为 HotListItem 数组，按点赞数降序；仅包含 state=0 的媒体；`coverUrl` 为封面预签名 URL。
+---
 
-**业务逻辑**：
-1. 根据 category 确定 Redis key：`media:rank:all` 或 `media:rank:0` / `media:rank:1`
-2. ZREVRANGE WITHSCORES 取前 (size+10) 条，过滤 state!=0 后取前 size 条，保证返回满 size 条（若 ZSET 不足则返回实际条数）
-3. 按 mediaIds 顺序批量查 media:core（缺则加锁查 DB 并回写），组装 HotListItem（likeCount 取自 ZSET score；media:core 不存 likeCount）
-4. ZSET 不存在时返回空数组
+## 三、树洞
+
+**树洞主人**：仅固定 12 位后浪成员拥有树洞（tree_hole 预置）；普通用户无创建树洞接口。  
+**通用**：所有树洞接口需登录；投递与回复共用 `POST /api/treehole/{ownerId}/sent/messages`，body 中 `rootMessageId` 为空为投递新留言，非空为树洞主人回复该条（仅支持一条回复）；同一投递者在上一条未读前不可再次投递（防刷）。
 
 ---
 
-**与 Redis_DESIGN.md 的对应**：
-- 点赞 → Redis ZINCRBY（all + category 双 key，Lua）；取消点赞 → 先判 score>0 再 ZINCRBY -1（Lua）
-- 查询是否已赞 → 只查 Redis（media:liked:{mediaId} bitmap GETBIT），未命中视为未赞
-- 排行榜 → ZREVRANGE 取 Top N；媒体删除/下架 → ZREM 三 key；审核通过 → 若 DB 有 like_count 则 ZADD 初始化
-- 列表/详情展示点赞数：先读 Redis ZSET score，未在榜时再用 DB 的 likeCount（media:core 不存 likeCount）
+### 1. 投递留言 / 主人回复
 
----
+**POST** `/api/treehole/{ownerId}/sent/messages`
 
-## 树洞功能接口设计（MVP）
+向指定树洞投递新留言，或树洞主人回复某条留言（通过 rootMessageId 区分）。
 
-### 树洞主人说明（产品设定）
-- 只有固定的 **12 位后浪成员**是树洞主人（其 `tree_hole` 数据由脚本/人工提前写入数据库）
-- 普通用户 **不拥有树洞**，因此不提供“创建树洞/树洞主人列表”的对外接口
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/json`
 
-### 通用说明
-- 所有树洞接口都需要登录（携带 `Authorization: Bearer <JWT_TOKEN>`）
-- 留言支持投递与回复：同一接口 `POST /api/treehole/{ownerId}/sent/messages`，请求体可选 `rootMessageId`；为空为投递新留言，非空为树洞主人回复该条留言（仅支持一条回复；回复时根消息与回复消息均置为 `state=3` 已回复，并写入 `reply_message_id`、`update_time`）
-- 留言可见性：
-  - 树洞主人：可查看该树洞全部留言，并修改留言状态
-  - 投递者：仅可查看自己投递的留言
-- 防刷规则（核心）：
-  - 同一投递者对同一树洞：若上一条留言仍为未读（`state=0`），则禁止再次投递，直到树洞主人将其标记为已读（`state=1`）或删除（`state=2`）
-- 并发防刷（实现层）：为防止同一投递者“快速连点”绕过防刷，投递新留言在事务内对 `tree_hole(owner_id)` 行执行 `SELECT ... FOR UPDATE` 加锁，保证 `count + insert` 原子性
+**路径参数**：`ownerId`（Long，树洞主人用户 ID）
 
----
+**请求参数**（JSON Body）
 
-## 1. 投递留言接口（sent）
-
-### POST /api/treehole/{ownerId}/sent/messages
-
-**功能说明**：向指定树洞主人的树洞投递留言（单向写）。
-
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
-
-**路径参数**：
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| ownerId | Long | 是 | 树洞主人用户ID（固定12位之一） |
+| content | String | 是 | 留言或回复内容 |
+| rootMessageId | Long | 否 | 为空=投递新留言；非空=主人回复该条留言 |
 
-**请求参数**：
-```json
-{
-  "content": "留言内容",
-  "rootMessageId": null
-}
-```
-- `content`：必填，留言/回复内容
-- `rootMessageId`：可选。为空表示**投递新留言**；非空表示**树洞主人回复**该条留言（仅支持一次回复）
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1641,49 +933,29 @@ Content-Type: application/json
 }
 ```
 
-**失败响应**：
-- 未授权（401）
-- 树洞不存在（404）：ownerId 对应的 tree_hole 不存在
-- 禁止投递（403）：树洞 state=2 或触发防刷规则（上一条未读）；或回复时当前用户非树洞主人/根消息已删除或已被回复
-
-**业务逻辑**：
-- **投递新留言**（`rootMessageId == null`）：
-  1. 从 JWT 获取当前用户ID（投递者）
-  2. 根据 ownerId 查询树洞（tree_hole）
-  3. 若 tree_hole.state=2（禁止投递）返回 403
-  4. 在事务内对 `tree_hole(owner_id)` 行加锁（`SELECT ... FOR UPDATE`），防止并发绕过防刷
-  5. 防刷校验：该投递者在该树洞存在 state=0（未读）留言则返回 403
-  6. 写入 tree_hole_message：`tree_hole_id/tree_hole_owner_id/sender_id/content/state=0`，`root_message_id`、`reply_message_id` 为空，`update_time` 设为当前时间
-- **树洞主人回复**（`rootMessageId != null`）：
-  1. 校验当前用户为树洞主人
-  2. 校验 rootMessageId 对应留言存在、属于该树洞、未删除且未回复（`reply_message_id` 为空）
-  3. 在事务内：插入回复消息（`root_message_id=rootMessageId`，`state=3` 已回复，`update_time` 等）；更新根消息：`reply_message_id=新回复 id`、`state=3`（已回复）、`update_time`
+**失败响应**：401 未授权；404 树洞不存在；403 禁止投递（树洞关闭或防刷）或回复权限不足。
 
 ---
 
-## 2. 留言列表接口
+### 2. 留言列表
 
-### GET /api/treehole/{ownerId}/messages
+**GET** `/api/treehole/{ownerId}/messages`
 
-**功能说明**：获取指定树洞的留言列表（按身份返回不同范围）。
+获取指定树洞的留言列表；主人看全部根留言，非主人看自己投递的根留言及主人回复自己的那条。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
+**路径参数**：`ownerId`（Long）
+
+**查询参数**
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| ownerId | Long | 是 | 树洞主人用户ID |
+| page | Integer | 否 | 默认 1 |
+| size | Integer | 否 | 默认 10 |
 
-**查询参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| page | Integer | 否 | 页码（默认1） |
-| size | Integer | 否 | 每页数量（默认10） |
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1705,43 +977,22 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-**响应字段说明**：
-| 字段名 | 类型 | 说明 |
-|--------|------|------|
-| id | Long | 留言ID |
-| senderId | Long | 发送者用户ID |
-| senderNickName | String | 发送者昵称（可能为null） |
-| content | String | 留言内容 |
-| state | Byte | 状态：0=未读，1=已读，2=已删除，3=已回复（主人回复后根消息置此状态） |
-| rootMessageId | Long | 根消息ID；null=根留言，非null=回复（主人对该根留言的回复） |
-
-**返回规则**：
-- 如果当前用户是 ownerId：返回该树洞全部根留言（过滤 `state=2` 的已删除留言；仅 `rootMessageId` 为 null 的根留言，不含主人的回复）
-- 否则：返回 ① 自己投递且未被自己删除的根留言；② 主人回复自己的留言（`root_message_id` 对应消息的 `sender_id` 为当前用户）
+`state`：0=未读，1=已读，2=已删除，3=已回复。`rootMessageId` 为 null 表示根留言，非 null 表示该条为主人对某根留言的回复。
 
 ---
 
-## 3. 树洞主人修改留言状态接口
+### 3. 留言标记已读
 
-### PUT /api/treehole/messages/{messageId}/read
+**PUT** `/api/treehole/messages/{messageId}/read`
 
-**功能说明**：树洞主人将留言标记为“已读”，用于管理与防刷解锁。
+树洞主人将留言标记为已读。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| messageId | Long | 是 | 留言ID |
+**路径参数**：`messageId`（Long）
 
-**请求参数**：
-无（请求体为空）
+**成功响应（200）**
 
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1751,44 +1002,58 @@ Content-Type: application/json
 }
 ```
 
-**失败响应**：
-- 未授权（401）
-- 资源不存在（404）：messageId 不存在
-- 无权限（403）：只有该留言所属树洞的主人可修改
+**失败响应**：401/404/403（非该树洞主人）。
 
 ---
 
-## 4. 树洞消息分享接口（TreeHoleMessageVisible）
+### 4. 树洞主人删除留言
 
-### POST /api/treehole/{ownerId}/messages/{messageId}/share
+**DELETE** `/api/treehole/messages/{messageId}`
 
-**功能说明**：树洞主人将一条自己树洞下的留言分享给其他树洞主人（可多人）；对方在「分享收件箱」中可见。与 media 可见列表一致：一个操作、一个列表参数；只分享给一人时传单元素列表。
+树洞主人全局删除该条留言。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
+**路径参数**：`messageId`（Long）
+
+**成功响应（200）**：`data` 为 null。
+
+**失败响应**：401/404/403。
+
+---
+
+### 5. 发送者删除留言
+
+**DELETE** `/api/treehole/messages/{messageId}/sender`
+
+发送者删除留言（仅对发送者本人不可见）。
+
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
+
+**路径参数**：`messageId`（Long）
+
+**成功响应（200）**：`data` 为 null。
+
+---
+
+### 6. 分享留言
+
+**POST** `/api/treehole/{ownerId}/messages/{messageId}/share`
+
+树洞主人将一条自己树洞下的留言分享给其他树洞主人（可多人）；对方在分享收件箱中可见。
+
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/json`
+
+**路径参数**：`ownerId`（Long，当前用户即分享者），`messageId`（Long）
+
+**请求参数**（JSON Body）
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| ownerId | Long | 是 | 分享者（当前用户）的树洞主人 ID，即留言所属树洞的 owner |
-| messageId | Long | 是 | 被分享的留言 ID |
+| ownerIds | List&lt;Long&gt; | 是 | 接收方树洞主人用户 ID 列表，如 `[2, 3, 5]` |
 
-**请求参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| ownerIds | List\<Long\> | 是 | 接收方树洞主人用户 ID 列表；只分享给一人时传单元素列表，如 `[2]` |
+**成功响应（200）**
 
-**请求体示例**：
-```json
-{
-  "ownerIds": [2, 3, 5]
-}
-```
-
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1798,57 +1063,36 @@ Content-Type: application/json
 }
 ```
 
-**失败响应**：
-- 未授权（401）
-- 请求参数错误（400）：ownerIds 为空或格式错误
-- 无权限（403）：当前用户不等于 ownerId（只能分享自己树洞的留言）
-- 资源不存在（404）：messageId 不存在或不属于该树洞；或某 targetOwnerId 在数据库中无对应树洞
-
-**业务约定**（实现时需满足）：
-- 留言须存在且 `tree_hole_message.tree_hole_owner_id = ownerId`，且 `state != 2`（未删除）。
-- 每个 targetOwnerId 不能为当前用户；须存在 `tree_hole.owner_id = targetOwnerId`（不校验固定名单，便于扩展）。
-- 幂等：同一 (messageId, targetOwnerId) 已存在则静默成功，不重复插入。
+**失败响应**：401/400/403/404；部分失败时 message 可能为「分享给xxx失败」。
 
 ---
 
-## 5. 分享收件箱接口（TreeHoleMessageVisible，暂未实现）
+### 7. 分享收件箱列表
 
-### GET /api/treeholeMessageVisible/shared/list
+**GET** `/api/treeholeMessageVisible/shared/list`
 
-**功能说明**：树洞主人查看“其他树洞主人分享给自己的留言”列表（分享区/收件箱）。
+树洞主人查看「别人分享给自己的留言」列表，分页。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**查询参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| page | Integer | 否 | 页码（默认1） |
-| size | Integer | 否 | 每页数量（默认10） |
+**查询参数**：`page`（默认 1），`size`（默认 10）
 
-**成功响应**（200）：返回结构与“留言列表接口”一致。
+**成功响应（200）**：结构与「留言列表」一致（`data.total`、`data.list`）。
 
 ---
 
-## 6. 获取树洞信息接口
+### 8. 获取树洞信息
 
-### GET /api/treehole/{ownerId}
+**GET** `/api/treehole/{ownerId}`
 
-**功能说明**：根据树洞主人用户ID获取树洞信息（含状态），用于前端展示“关闭树洞/开放树洞”按钮及当前状态。需登录。
+根据树洞主人用户 ID 获取树洞信息（含 state），用于前端展示开关状态。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**路径参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| ownerId | Long | 是 | 树洞主人用户ID |
+**路径参数**：`ownerId`（Long）
 
-**成功响应**（200）：
+**成功响应（200）**
+
 ```json
 {
   "code": 200,
@@ -1861,68 +1105,47 @@ Authorization: Bearer <JWT_TOKEN>
   "timestamp": 1705564800000
 }
 ```
-说明：`data.state`：0=正常（允许投递），1=保留，2=禁止投递
 
-**失败响应**：
-- 未授权（401）
-- 资源不存在（404）：ownerId 对应的树洞不存在
+`data.state`：0=正常（允许投递），1=保留，2=禁止投递。
 
-**业务逻辑**：根据 ownerId 查询 tree_hole 表，返回树洞主键、owner_id、state 等；仅登录用户可调用。
+**失败响应**：401/404。
 
 ---
 
-## 7. 树洞主人设置树洞状态接口
+### 9. 设置树洞状态
 
-### PUT /api/treehole/{ownerId}/state
+**PUT** `/api/treehole/{ownerId}/state`
 
-**功能说明**：树洞主人开启/关闭“允许投递”开关。仅树洞主人本人可操作。
+树洞主人开启/关闭「允许投递」；仅本人可操作。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/json`
 
-**路径参数**：
+**路径参数**：`ownerId`（Long）
+
+**请求参数**（JSON Body）
+
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| ownerId | Long | 是 | 树洞主人用户ID |
+| state | Byte | 是 | 0=正常（允许投递），2=禁止投递 |
 
-**请求参数**：
-```json
-{
-  "state": 2
-}
-```
-说明：`state=0` 正常（允许投递）；`state=2` 禁止他人投递新消息
+**成功响应（200）**：`data` 为 null，message 为「更新成功」。
 
-**成功响应**（200）：`data` 为 null，message 为“更新成功”。
-
-**失败响应**：未授权（401）、无权限（403，当前用户非树洞主人）、请求参数错误（400，state 非 0/2）。
+**失败响应**：401/403/400（state 非 0/2）。
 
 ---
 
-## 8. 树洞黑名单接口
+### 10. 查询是否已拉黑
 
-所有树洞黑名单接口前缀：`/api/treeholeBlacklist`，需登录；仅**树洞主人**可操作（当前用户须为 ownerId 对应树洞的主人）。
+**GET** `/api/treeholeBlacklist/check`
 
-### 8.1 查询是否已拉黑
+树洞主人查询是否已拉黑某用户。
 
-### GET /api/treeholeBlacklist/check
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`
 
-**功能说明**：查询当前用户（树洞主人）是否已拉黑某用户。用于成员专区树洞详情中显示“拉黑该用户”或“解除拉黑”按钮。
+**查询参数**：`blockedUserId`（Long，必填）
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+**成功响应（200）**
 
-**查询参数**：
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| blockedUserId | Long | 是 | 被查询用户ID |
-
-**成功响应**（200）：
 ```json
 {
   "code": 200,
@@ -1931,140 +1154,70 @@ Authorization: Bearer <JWT_TOKEN>
   "timestamp": 1705564800000
 }
 ```
-说明：`data` 为 `true` 表示已拉黑（表中存在且 state=0）；`false` 表示未拉黑或已解除（表中不存在或 state=1）。
 
-**失败响应**：未授权（401）、请求参数错误（400）、无权限（403，当前用户非树洞主人）。
+`data` 为 true 表示已拉黑，false 表示未拉黑或已解除。
 
-**业务逻辑**：从 JWT 取当前用户为 ownerId，校验其拥有树洞；调用 `isBlocked(ownerId, blockedUserId)`，仅 state=0 视为拉黑。
+**失败响应**：401/400/403。
 
 ---
 
-### 8.2 拉黑用户
+### 11. 拉黑用户
 
-### POST /api/treeholeBlacklist/block
+**POST** `/api/treeholeBlacklist/block`
 
-**功能说明**：树洞主人拉黑某用户，拉黑后该用户无法再向该树洞投递消息（之前已投递的留言仍对主人可见）。
+树洞主人拉黑某用户；拉黑后该用户无法再向该树洞投递新留言。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/json`
 
-**请求参数**：
-```json
-{
-  "blockedUserId": 10001,
-  "reason": "拉黑原因，可选，可不填"
-}
-```
+**请求参数**（JSON Body）
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| blockedUserId | Long | 是 | 被拉黑用户ID |
-| reason | String | 否 | 拉黑原因，可不填 |
+| blockedUserId | Long | 是 | 被拉黑用户 ID |
+| reason | String | 否 | 拉黑原因 |
 
-**成功响应**（200）：`data` 为 null，message 为“成功，该用户已被拉黑”。
+**成功响应（200）**：`data` 为 null，message 为「成功，该用户已被拉黑」。
 
-**失败响应**：未授权（401）、请求参数错误（400）、无权限（403）。若表中已存在该用户且 state=0，可幂等处理为成功。
+**失败响应**：401/400/403；已存在且 state=0 时可幂等成功。
 
 ---
 
-### 8.3 解除拉黑
+### 12. 解除拉黑
 
-### POST /api/treeholeBlacklist/unblock
+**POST** `/api/treeholeBlacklist/unblock`
 
-**功能说明**：树洞主人解除对某用户的拉黑（将对应记录的 state 置为 1，解封）。幂等：已解除或不存在则静默成功。
+树洞主人解除对某用户的拉黑；幂等。
 
-**请求头**：
-```
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
+**请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: application/json`
 
-**请求参数**：
+**请求参数**（JSON Body）：`blockedUserId`（Long，必填）
+
+**成功响应（200）**：`data` 为 null，message 为「解除拉黑成功」。
+
+**失败响应**：401/403。
+
+---
+
+## 四、状态码与枚举
+
+**通用状态码**  
+200 成功；400 请求参数错误；401 未授权（未登录或 Token 过期）；403 无权限；404 资源不存在；500 服务器内部错误。
+
+**业务状态码**  
+4001 用户名已存在；4002 用户名或密码错误/密码错误；4003 Token 无效或已过期；4005 文件格式不支持；4007 用户已注销；4008 用户已拉黑；4009 手机号已注册；4010 手机号格式错误；4017 登录名与手机号不匹配；4022 无审核权限。
+
+**用户 state**：0 正常，1 已注销，2 已拉黑。  
+**用户 level**：0 作者，1 管理员，2 普通用户，3 游客。  
+**树洞 state**：0 正常（允许投递），1 保留，2 禁止投递。  
+**留言 state**：0 未读，1 已读，2 已删除，3 已回复。
+
+**失败响应体示例**（格式统一，仅 code/message 不同）：
+
 ```json
 {
-  "blockedUserId": 10001
+  "code": 4002,
+  "message": "用户名或密码错误",
+  "data": null,
+  "timestamp": 1705564800000
 }
 ```
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| blockedUserId | Long | 是 | 被解除拉黑的用户ID |
-
-**成功响应**（200）：`data` 为 null，message 为“解除拉黑成功”。
-
-**失败响应**：未授权（401）、无权限（403）。
-
----
-
-## 更新日志
-
-### 2026-01-18
-- 完成用户服务接口设计（最终版）
-- 确定接口路径规范：`/api/user/...`
-- 确定数据保留策略：注销用户数据保留，拉黑用户数据清理
-- 确定登录返回信息：不包含phoneNumber
-
-### 2026-01-21
-- 完成媒体服务接口设计（上传、下载、删除）
-- 确定接口路径规范：`/api/media/...`
-- 确定文件格式支持：图片（jpg, jpeg, png, gif, webp, bmp）和视频（mp4, mov, avi, mkv, flv, wmv）
-- 确定可见权限规则：上传者本人 + 公共区（可选） + 管理员列表
-- 确定下载机制：预签名URL（5分钟有效）
-- 确定删除机制：仅上传者本人可删除（作者/管理员也可删）；物理删除：先 state=4，删 media_visible 与 MinIO，再物理 DELETE media 行；支持 state=4 时重复调用用于收尾
-
-### 2026-01-31
-- 新增媒体列表接口：`GET /api/mediaVisible/list`（支持按专区 `currentUserId` 筛选）
-- 新增媒体详情接口：`GET /api/media/{id}`（用于详情页展示）
-
-### 2026-02-02
-- 新增媒体审核流程：
-  - 上传完成后媒体状态为 `state=6`（待审核），需审核通过后才能公开显示
-  - 新增审核通过接口：`POST /api/media/audit/approve`（批量审核通过，`state=6` → `state=0`）
-  - 新增审核驳回接口：`POST /api/media/audit/reject`（批量审核驳回，`state=6` → `state=7`）
-  - 新增待审核列表接口：`GET /api/media/audit/pending`（分页查询待审核媒体）
-  - 更新接口允许 `state=0/6/7` 修改基础信息；`state=7` 修改后自动重置为 `state=6` 需重新审核
-  - 列表/详情/下载接口仅显示 `state=0`（已审核通过）的媒体
-  - "我的上传"列表显示所有状态（排除 `state=5` 已删除），包括待审核和审核未通过状态
-- 新增查询媒体所属成员专区接口：`GET /api/mediaVisible/{mediaId}/zones`（根据媒体ID查询该媒体属于哪些成员专区）
-
-### 2026-02-13
-- 新增用户管理接口（仅作者/管理员可操作）：
-  - 新增修改用户等级接口：`PUT /api/user/{targetUserId}/level`（修改指定用户的等级）
-  - 新增修改用户状态接口：`PUT /api/user/{targetUserId}/state`（修改指定用户的状态，如拉黑）
-  - 新增获取用户列表接口：`GET /api/user/list`（分页获取用户列表，仅作者可操作，不包含作者用户）
-  - 新增根据用户ID获取昵称接口：`GET /api/user/{userId}/nickname`（根据用户ID获取用户昵称）
-  - 更新树洞留言列表接口：返回结果中的 `TreeHoleMessageItem` 新增 `senderNickName` 字段（发送者昵称）
-
-### 2026-02-14
-- 树洞留言列表接口（`TreeHoleMessageItem`）：
-  - 新增 `rootMessageId` 字段（null=根留言，非null=回复）
-  - 新增 `state=3`（已回复）：主人回复后，被回复的根消息置为此状态
-  - 非主人视角：除自己投递的根留言外，还返回主人回复自己的留言（`root_message_id` 对应消息的 `sender_id` 为当前用户）
-  - 树洞主人视角：仅返回根留言（`rootMessageId` 为 null），不包含主人的回复
-- 投递/回复接口（树洞主人回复）：
-  - 回复消息与被回复的根消息均置为 `state=3`（已回复）
-- 树洞扩展接口：
-  - 新增获取树洞信息接口：`GET /api/treehole/{ownerId}`（返回树洞信息含 `state`，供前端展示关闭/开放按钮）
-  - 原“树洞主人设置树洞状态”调整为第 7 节；新增第 6 节“获取树洞信息”
-- 树洞黑名单接口（`/api/treeholeBlacklist`，仅树洞主人可操作）：
-  - 查询是否已拉黑：`GET /api/treeholeBlacklist/check?blockedUserId=xxx`，返回 `data: true/false`
-  - 拉黑用户：`POST /api/treeholeBlacklist/block`，请求体 `blockedUserId`（必填）、`reason`（可选）
-  - 解除拉黑：`POST /api/treeholeBlacklist/unblock`，请求体 `blockedUserId`
-- 待审核列表接口（`GET /api/media/audit/pending`）：
-  - 新增 `category` 查询参数（可选）：不传=全部，0=图片，1=视频，后端筛选，复用 `idx_media_state_category_update_time` 索引
-  - 前端 ResourceManage 资源审核筛选由前端过滤改为后端筛选，与 MediaBrowse、资源管理列表统一
-
-### 2026-02-19
-- 新增点赞与排行榜接口（第 12 节，按 Redis_DESIGN.md 排行榜设计）：
-  - 点赞：`POST /api/media/{id}/like`（需登录，仅 state=0 可点赞；Redis 双 ZSET ZINCRBY）
-  - 取消点赞：`POST /api/media/{id}/unlike`（需登录；Redis 先判 score>0 再 ZINCRBY -1）
-  - 查询是否已赞：`GET /api/userLikeRecord/media/{mediaId}/status`（归属用户点赞记录，需登录，只查 Redis 以 Redis 为准，返回 true/false）
-  - 热门排行榜：`GET /api/mediaVisible/rank`（游客可访问，query：category、size；返回 HotListItem 列表，按点赞数降序）
-
-### 2026-02-23
-- 上传流程改为「前端直传 OSS」两阶段方案（详见 `docs/upload_in_blocks.md`）：
-  - **准备上传**：`POST /api/media/upload` 增加必填参数 `file_hash`（前端计算），后端仅做幂等校验、不计算 hash；不再接收主文件，落库 Media（state=1）后返回 `mediaId`、`storagePath`，由前端使用 OSS 分块上传 SDK 直传。
-  - **通知上传结果**：新增 `POST /api/media/upload/complete`，前端在上传成功或失败后调用；后端先校验 OSS 对象存在再执行后续逻辑（成功/失败沿用现有逻辑），并做幂等（state≠1 直接返回）。
