@@ -78,27 +78,13 @@
             />
           </div>
 
-          <div class="media-grid-pagination">
-            <button
-              type="button"
-              class="media-grid-page-btn"
-              :disabled="gridPage <= 1 || loading"
-              @click="goToGridPage(gridPage - 1)"
-            >
-              上一页
-            </button>
-            <span class="media-grid-page-info">
-              第 {{ gridPage }} / {{ gridTotalPages }} 页（共 {{ gridTotal }} 条）
-            </span>
-            <button
-              type="button"
-              class="media-grid-page-btn"
-              :disabled="gridPage >= gridTotalPages || loading"
-              @click="goToGridPage(gridPage + 1)"
-            >
-              下一页
-            </button>
-          </div>
+          <BasePagination
+            :current-page="gridPage"
+            :total-pages="gridTotalPages"
+            :total-items="gridTotal"
+            :disabled="loading"
+            @update:page="goToGridPage"
+          />
         </div>
       </div>
 
@@ -151,6 +137,7 @@ import NavBar from '@/components/NavBar.vue'
 import MediaStrip from '@/components/MediaStrip.vue'
 import MediaCard from '@/components/MediaCard.vue'
 import MediaDetail from '@/views/MediaDetail.vue'
+import BasePagination from '@/components/BasePagination.vue'
 import { getMediaList } from '@/api/media'
 import { getMembers } from '@/config/members'
 import { getContactInfo } from '@/config/contact'

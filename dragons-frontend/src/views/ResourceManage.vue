@@ -219,13 +219,17 @@
               </table>
             </div>
 
-            <div v-if="!userListLoading && userList.length > 0 && userListHasMore" class="pagination">
-              <button class="load-more-btn" @click="loadUserList(false)" :disabled="userListLoading">
-                {{ userListLoading ? '加载中...' : '加载更多' }}
-              </button>
-              <div class="pagination-hint" v-if="userListTotal > 0">
-                已加载 {{ userList.length }} / {{ userListTotal }}
-              </div>
+            <div
+              v-if="!userListLoading && userList.length > 0 && userListTotal > 0"
+              class="pagination"
+            >
+              <BasePagination
+                :current-page="userListPage"
+                :total-pages="userListTotalPages"
+                :total-items="userListTotal"
+                :disabled="userListLoading"
+                @update:page="goToUserListPage"
+              />
             </div>
           </section>
 
@@ -385,13 +389,17 @@
               </table>
             </div>
 
-            <div v-if="!pendingLoading && pendingList.length > 0 && pendingHasMore" class="pagination">
-              <button class="load-more-btn" @click="loadPending(false)" :disabled="pendingLoading">
-                {{ pendingLoading ? '加载中...' : '加载更多' }}
-              </button>
-              <div class="pagination-hint" v-if="pendingTotal > 0">
-                已加载 {{ pendingList.length }} / {{ pendingTotal }}
-              </div>
+            <div
+              v-if="!pendingLoading && pendingList.length > 0 && pendingTotal > 0"
+              class="pagination"
+            >
+              <BasePagination
+                :current-page="pendingPage"
+                :total-pages="pendingTotalPages"
+                :total-items="pendingTotal"
+                :disabled="pendingLoading"
+                @update:page="goToPendingPage"
+              />
             </div>
           </section>
 
@@ -448,10 +456,17 @@
               </table>
             </div>
 
-            <div v-if="!uploadedLoading && uploadedList.length > 0 && uploadedHasMore" class="pagination">
-              <button class="load-more-btn" @click="loadUploaded(false)" :disabled="uploadedLoading">
-                {{ uploadedLoading ? '加载中...' : '加载更多' }}
-              </button>
+            <div
+              v-if="!uploadedLoading && uploadedList.length > 0 && uploadedTotal > 0"
+              class="pagination"
+            >
+              <BasePagination
+                :current-page="uploadedPage"
+                :total-pages="uploadedTotalPages"
+                :total-items="uploadedTotal"
+                :disabled="uploadedLoading"
+                @update:page="goToUploadedPage"
+              />
             </div>
           </section>
         </main>
@@ -466,6 +481,7 @@ import { useRouter } from 'vue-router'
 import NavBar from '@/components/NavBar.vue'
 import MediaDetailModal from '@/components/MediaDetailModal.vue'
 import MediaDetail from '@/views/MediaDetail.vue'
+import BasePagination from '@/components/BasePagination.vue'
 import { useUserStore } from '@/stores/user'
 import { getAuditPendingList, auditApprove, auditReject, getMediaList, deleteMedia } from '@/api/media'
 import { getUserList, updateUserLevel, updateUserState } from '@/api/user'
@@ -496,9 +512,11 @@ const pendingList = ref([])
 const pendingLoading = ref(false)
 const pendingPage = ref(1)
 const pendingSize = ref(20)
-const pendingHasMore = ref(true)
 const pendingErrorMsg = ref('')
 const pendingTotal = ref(0)
+const pendingTotalPages = computed(() =>
+  Math.max(1, Math.ceil((pendingTotal.value || 0) / pendingSize.value))
+)
 
 // 审核列表筛选：null=全部，0=图片，1=视频（后端筛选）
 const auditCategoryFilter = ref(null)
@@ -525,8 +543,11 @@ const uploadedList = ref([])
 const uploadedLoading = ref(false)
 const uploadedPage = ref(1)
 const uploadedSize = ref(20)
-const uploadedHasMore = ref(true)
 const uploadedErrorMsg = ref('')
+const uploadedTotal = ref(0)
+const uploadedTotalPages = computed(() =>
+  Math.max(1, Math.ceil((uploadedTotal.value || 0) / uploadedSize.value))
+)
 
 // 审核中（禁用按钮）
 const auditingIds = ref(new Set())
@@ -545,6 +566,9 @@ const userListSize = ref(20)
 const userListHasMore = ref(true)
 const userListTotal = ref(0)
 const userListErrorMsg = ref('')
+const userListTotalPages = computed(() =>
+  Math.max(1, Math.ceil((userListTotal.value || 0) / userListSize.value))
+)
 
 // 用户操作处理状态
 const userProcessingIds = ref(new Set())
@@ -724,13 +748,12 @@ function switchCategory(category) {
 }
 
 async function loadPending(reset = false) {
-  if (pendingLoading.value || (!pendingHasMore.value && !reset)) return
+  if (pendingLoading.value) return
   pendingLoading.value = true
   try {
     if (reset) {
       pendingPage.value = 1
       pendingList.value = []
-      pendingHasMore.value = true
       pendingTotal.value = 0
     }
     const res = await getAuditPendingList(pendingPage.value, pendingSize.value, auditCategoryFilter.value)
@@ -746,10 +769,7 @@ async function loadPending(reset = false) {
     const list = res?.data?.list || []
     const total = Number(res?.data?.total || 0)
     pendingTotal.value = total
-    if (reset) pendingList.value = list
-    else pendingList.value.push(...list)
-    pendingHasMore.value = pendingList.value.length < total
-    if (pendingHasMore.value) pendingPage.value += 1
+    pendingList.value = list
   } catch (err) {
     pendingErrorMsg.value = err?.response?.data?.message || err?.message || '加载失败，请重试'
   } finally {
@@ -757,14 +777,21 @@ async function loadPending(reset = false) {
   }
 }
 
+function goToPendingPage(nextPage) {
+  const p = Math.min(Math.max(1, nextPage), pendingTotalPages.value)
+  if (p === pendingPage.value) return
+  pendingPage.value = p
+  loadPending(false)
+}
+
 async function loadUploaded(reset = false) {
-  if (uploadedLoading.value || (!uploadedHasMore.value && !reset)) return
+  if (uploadedLoading.value) return
   uploadedLoading.value = true
   try {
     if (reset) {
       uploadedPage.value = 1
       uploadedList.value = []
-      uploadedHasMore.value = true
+      uploadedTotal.value = 0
     }
     const res = await getMediaList(uploadedPage.value, uploadedSize.value, activeCategory.value, 0)
     if (res && res.code !== 200) {
@@ -774,15 +801,20 @@ async function loadUploaded(reset = false) {
     uploadedErrorMsg.value = ''
     const list = res?.data?.list || []
     const total = res?.data?.total || 0
-    if (reset) uploadedList.value = list
-    else uploadedList.value.push(...list)
-    uploadedHasMore.value = uploadedList.value.length < total
-    if (uploadedHasMore.value) uploadedPage.value += 1
+    uploadedList.value = list
+    uploadedTotal.value = total
   } catch (err) {
     uploadedErrorMsg.value = err?.response?.data?.message || err?.message || '加载失败，请重试'
   } finally {
     uploadedLoading.value = false
   }
+}
+
+function goToUploadedPage(nextPage) {
+  const p = Math.min(Math.max(1, nextPage), uploadedTotalPages.value)
+  if (p === uploadedPage.value) return
+  uploadedPage.value = p
+  loadUploaded(false)
 }
 
 async function handleApprove(mediaId) {
@@ -872,13 +904,12 @@ async function handleDeleteConfirm() {
 }
 
 async function loadUserList(reset = false) {
-  if (userListLoading.value || (!userListHasMore.value && !reset)) return
+  if (userListLoading.value) return
   userListLoading.value = true
   try {
     if (reset) {
       userListPage.value = 1
       userList.value = []
-      userListHasMore.value = true
       userListTotal.value = 0
     }
     const res = await getUserList(userListPage.value, userListSize.value)
@@ -890,15 +921,19 @@ async function loadUserList(reset = false) {
     const list = res?.data?.list || []
     const total = Number(res?.data?.total || 0)
     userListTotal.value = total
-    if (reset) userList.value = list
-    else userList.value.push(...list)
-    userListHasMore.value = userList.value.length < total
-    if (userListHasMore.value) userListPage.value += 1
+    userList.value = list
   } catch (err) {
     userListErrorMsg.value = err?.response?.data?.message || err?.message || '加载失败，请重试'
   } finally {
     userListLoading.value = false
   }
+}
+
+function goToUserListPage(nextPage) {
+  const p = Math.min(Math.max(1, nextPage), userListTotalPages.value)
+  if (p === userListPage.value) return
+  userListPage.value = p
+  loadUserList(false)
 }
 
 function handleChangeUserLevel(user) {

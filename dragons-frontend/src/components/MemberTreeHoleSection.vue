@@ -170,25 +170,13 @@
 
         <!-- 分页 -->
         <div v-if="!loading && messageList.length > 0" class="pagination">
-          <button
-            type="button"
-            class="page-btn"
-            :disabled="currentPage <= 1"
-            @click="goToPage(currentPage - 1)"
-          >
-            上一页
-          </button>
-          <span class="page-info">
-            第 {{ currentPage }} / {{ totalPages }} 页（共 {{ total }} 条）
-          </span>
-          <button
-            type="button"
-            class="page-btn"
-            :disabled="currentPage >= totalPages"
-            @click="goToPage(currentPage + 1)"
-          >
-            下一页
-          </button>
+          <BasePagination
+            :current-page="currentPage"
+            :total-pages="totalPages"
+            :total-items="total"
+            :disabled="loading"
+            @update:page="goToPage"
+          />
         </div>
       </div>
 
@@ -471,6 +459,7 @@ import { ref, computed, watch } from 'vue'
 import { getTreeHoleMessages, sendTreeHoleMessage, markMessageRead, deleteMessageByOwner, deleteMessageBySender, updateTreeHoleState, getTreeHoleInfo, checkBlockStatus, blockUser, unblockUser } from '@/api/treehole'
 import { getNickNameById } from '@/api/user'
 import { useUserStore } from '@/stores/user'
+import BasePagination from '@/components/BasePagination.vue'
 
 const props = defineProps({
   ownerId: {

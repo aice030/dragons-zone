@@ -210,10 +210,17 @@
                 </table>
               </div>
 
-              <div v-if="!loading && mediaList.length > 0 && hasMore" class="pagination">
-                <button class="load-more-btn" @click="loadMore" :disabled="loading">
-                  {{ loading ? '加载中...' : '加载更多' }}
-                </button>
+              <div
+                v-if="!loading && mediaList.length > 0 && total > 0"
+                class="pagination"
+              >
+                <BasePagination
+                  :current-page="page"
+                  :total-pages="totalPages"
+                  :total-items="total"
+                  :disabled="loading"
+                  @update:page="goToPage"
+                />
               </div>
 
             </div>
@@ -229,6 +236,7 @@ import { useRouter } from 'vue-router'
 import NavBar from '@/components/NavBar.vue'
 import MediaDetailModal from '@/components/MediaDetailModal.vue'
 import UploadMedia from '@/views/UploadMedia.vue'
+import BasePagination from '@/components/BasePagination.vue'
 import { useUserStore } from '@/stores/user'
 import { getMyUploads, deleteMedia } from '@/api/media'
 
@@ -244,7 +252,8 @@ const mediaList = ref([])
 const loading = ref(false)
 const page = ref(1)
 const size = ref(20)
-const hasMore = ref(true)
+const total = ref(0)
+const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / size.value)))
 const errorMsg = ref('')
 
 // 批量删除模式（仅UI：勾选）
@@ -278,30 +287,26 @@ onMounted(() => {
 })
 
 async function loadMyUploads(reset = false) {
-  if (loading.value || (!hasMore.value && !reset)) return
+  if (loading.value) return
   loading.value = true
   try {
     if (reset) {
       page.value = 1
       mediaList.value = []
-      hasMore.value = true
+      total.value = 0
     }
     const response = await getMyUploads(page.value, size.value, currentCategory.value)
     if (response && response.code !== 200) {
       errorMsg.value = response.message || '加载失败，请重试'
+      mediaList.value = []
+      total.value = 0
       return
     }
     if (response?.data) {
       errorMsg.value = ''
       const newList = response.data.list || []
-      if (reset) {
-        mediaList.value = newList
-      } else {
-        mediaList.value.push(...newList)
-      }
-      const total = response.data.total || 0
-      hasMore.value = mediaList.value.length < total
-      if (hasMore.value) page.value += 1
+      mediaList.value = newList
+      total.value = response.data.total || 0
     }
   } catch (error) {
     errorMsg.value = error?.response?.data?.message || error?.message || '加载失败，请重试'
@@ -317,8 +322,11 @@ function switchCategory(category) {
   loadMyUploads(true)
 }
 
-function loadMore() {
-  if (hasMore.value && !loading.value) loadMyUploads(false)
+function goToPage(nextPage) {
+  const p = Math.min(Math.max(1, nextPage), totalPages.value)
+  if (p === page.value) return
+  page.value = p
+  loadMyUploads(false)
 }
 
 function handleCoverError(item) {
