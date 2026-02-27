@@ -56,7 +56,7 @@ export function getMediaList(page = 1, size = 20, category = null, zoneUserId = 
     params.category = category
   }
   
-  return api.get('/api/mediaVisible/list', { params })
+  return api.get('/api/media/visible/list', { params })
 }
 
 /**
@@ -70,7 +70,7 @@ export function getMediaRank(category = null, size = 20) {
   if (category !== null && category !== undefined && category !== '') {
     params.category = category
   }
-  return api.get('/api/mediaVisible/rank', { params })
+  return api.get('/api/media/visible/rank', { params })
 }
 
 /**
@@ -133,7 +133,7 @@ export function getMyUploads(page = 1, size = 10, category = null) {
   if (category !== null) {
     params.category = category
   }
-  return api.get('/api/mediaVisible/my/list', { params })
+  return api.get('/api/media/visible/my/list', { params })
 }
 
 /**
@@ -142,7 +142,7 @@ export function getMyUploads(page = 1, size = 10, category = null) {
  * @returns {Promise} 可见专区ID列表 { data: [userId1, userId2, ...] }
  */
 export function getMediaVisibleZones(mediaId) {
-  return api.get(`/api/mediaVisible/${mediaId}/zones`)
+  return api.get(`/api/media/visible/${mediaId}/zones`)
 }
 
 /**

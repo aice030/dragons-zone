@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
  * @since 2026-02-03
  */
 @RestController
-@RequestMapping("/api/treeholeBlacklist")
+@RequestMapping("/api/treehole/blacklist")
 public class TreeHoleBlacklistController {
 
     private final ITreeHoleBlacklistService treeHoleBlacklistService;
@@ -42,7 +42,7 @@ public class TreeHoleBlacklistController {
 
     /**
      * 树洞主人拉黑用户
-     * POST /api/treeholeBlacklist/block
+     * POST /api/treehole/blacklist/block
      * 请求体：{ "blockedUserId": 被拉黑用户ID, "reason": "原因（可选）" }
      * 仅树洞主人可调用（当前用户须拥有树洞）；保证 owner_id + blocked_user_id 唯一，已存在且生效中则静默成功，已解除则改回生效，不存在则新增。
      */
@@ -67,7 +67,7 @@ public class TreeHoleBlacklistController {
 
     /**
      * 查询当前用户（树洞主人）是否已拉黑某用户
-     * GET /api/treeholeBlacklist/check?blockedUserId=xxx
+     * GET /api/treehole/blacklist/check?blockedUserId=xxx
      * 仅树洞主人可调用；返回 data 为 true 表示已拉黑（表中存在且 state=0），false 表示未拉黑或已解除。
      */
     @GetMapping("/check")
@@ -91,7 +91,7 @@ public class TreeHoleBlacklistController {
 
     /**
      * 树洞主人解除拉黑用户
-     * POST /api/treeholeBlacklist/unblock
+     * POST /api/treehole/blacklist/unblock
      * 请求体：{ "blockedUserId": 被解除拉黑的用户ID }
      * 仅树洞主人可调用；记录不存在或已是解除状态则静默成功（幂等）。
      */

@@ -92,7 +92,7 @@ export function shareTreeHoleMessage(ownerId, messageId, ownerIds) {
  * @returns {Promise<{ data: boolean }>} data 为 true 表示已拉黑，false 表示未拉黑或已解除
  */
 export function checkBlockStatus(blockedUserId) {
-  return api.get('/api/treeholeBlacklist/check', {
+  return api.get('/api/treehole/blacklist/check', {
     params: { blockedUserId }
   })
 }
@@ -104,7 +104,7 @@ export function checkBlockStatus(blockedUserId) {
  * @returns {Promise}
  */
 export function blockUser(blockedUserId, reason = '') {
-  return api.post('/api/treeholeBlacklist/block', {
+  return api.post('/api/treehole/blacklist/block', {
     blockedUserId,
     reason
   })
@@ -116,7 +116,7 @@ export function blockUser(blockedUserId, reason = '') {
  * @returns {Promise}
  */
 export function unblockUser(blockedUserId) {
-  return api.post('/api/treeholeBlacklist/unblock', {
+  return api.post('/api/treehole/blacklist/unblock', {
     blockedUserId
   })
 }

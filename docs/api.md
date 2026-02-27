@@ -3,7 +3,7 @@
 ## 约定
 
 - **统一响应格式**：`{ "code", "message", "data", "timestamp" }`。成功时 `code` 为 200，失败时 `data` 多为 null，错误信息见 `message` 及文末状态码说明。
-- **接口前缀**：用户 `/api/user/`；媒体 `/api/media/`、`/api/mediaVisible/`；树洞 `/api/treehole/`、`/api/treeholeMessageVisible/`、`/api/treeholeBlacklist/`。
+- **接口前缀**：用户 `/api/user/`；媒体 `/api/media/`、`/api/media/visible/`；树洞 `/api/treehole/`、`/api/treehole/message/visible/`、`/api/treehole/blacklist/`。
 - **鉴权**：需登录的接口请在请求头携带 `Authorization: Bearer <JWT_TOKEN>`。
 
 ---
@@ -324,7 +324,7 @@
 ## 二、媒体
 
 **游客模式**：未登录可访问以下接口，无需携带 `Authorization`：  
-`GET /api/mediaVisible/list`、`GET /api/media/{id}`、`GET /api/media/{id}/download`、`GET /api/mediaVisible/{mediaId}/zones`、`GET /api/mediaVisible/rank`。其余写操作及「我的上传」、审核等需登录。
+`GET /api/media/visible/list`、`GET /api/media/{id}`、`GET /api/media/{id}/download`、`GET /api/media/visible/{mediaId}/zones`、`GET /api/media/visible/rank`。其余写操作及「我的上传」、审核等需登录。
 
 **媒体 state**：0=正常，1=正在上传，2=上传成功，3=上传失败，4=正在删除，5=已删除，6=待审核，7=审核未通过。
 
@@ -564,7 +564,7 @@
 
 ### 8. 获取媒体列表（标签筛选）
 
-**GET** `/api/mediaVisible/list`
+**GET** `/api/media/visible/list`
 
 分页获取媒体列表，支持公共区与成员专区；仅返回 state=0（已审核通过）。游客可访问。
 
@@ -637,7 +637,7 @@
 
 ### 10. 获取「我的上传」列表
 
-**GET** `/api/mediaVisible/my/list`
+**GET** `/api/media/visible/my/list`
 
 上传者本人查看自己上传的媒体列表（含待审核、审核未通过，排除 state=5 已删除，）。
 
@@ -678,7 +678,7 @@
 
 ### 11. 查询媒体所属成员专区
 
-**GET** `/api/mediaVisible/{mediaId}/zones`
+**GET** `/api/media/visible/{mediaId}/zones`
 
 根据媒体 ID 返回该媒体所在的成员专区 ID 列表；仅公共区可见时返回空数组。游客可访问。
 
@@ -890,7 +890,7 @@
 
 ### 18. 热门排行榜
 
-**GET** `/api/mediaVisible/rank`
+**GET** `/api/media/visible/rank`
 
 按点赞数从高到低返回热门媒体 Top N；不做分页与专区；游客可访问。
 
@@ -1096,7 +1096,7 @@
 
 ### 7. 分享收件箱列表
 
-**GET** `/api/treeholeMessageVisible/shared/list`
+**GET** `/api/treehole/message/visible/shared/list`
 
 树洞主人查看「别人分享给自己的留言」列表，分页。
 
@@ -1163,7 +1163,7 @@
 
 ### 10. 查询是否已拉黑
 
-**GET** `/api/treeholeBlacklist/check`
+**GET** `/api/treehole/blacklist/check`
 
 树洞主人查询是否已拉黑某用户。
 
@@ -1190,7 +1190,7 @@
 
 ### 11. 拉黑用户
 
-**POST** `/api/treeholeBlacklist/block`
+**POST** `/api/treehole/blacklist/block`
 
 树洞主人拉黑某用户；拉黑后该用户无法再向该树洞投递新留言。
 
@@ -1211,7 +1211,7 @@
 
 ### 12. 解除拉黑
 
-**POST** `/api/treeholeBlacklist/unblock`
+**POST** `/api/treehole/blacklist/unblock`
 
 树洞主人解除对某用户的拉黑；幂等。
 

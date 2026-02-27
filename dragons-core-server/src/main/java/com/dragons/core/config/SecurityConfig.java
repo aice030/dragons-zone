@@ -53,8 +53,8 @@ public class SecurityConfig {
                 // 登录、注册、未登录找回密码无需认证
                 .requestMatchers("/api/user/login", "/api/user/register", "/api/user/forgotPassword").permitAll()
                 // 游客模式：未登录可查看公共区/专区媒体列表、媒体详情、获取下载链接（无需请求头）
-                .requestMatchers(HttpMethod.GET, "/api/mediaVisible/list").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/mediaVisible/rank").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/media/visible/list").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/media/visible/rank").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/media/*/download").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/media/*").permitAll()
                 // 其他所有请求都需要认证

@@ -71,7 +71,7 @@
     - `POST /api/media/audit/approve`
     - `POST /api/media/audit/reject`
 - **已上传列表**（公共区已审核通过，state=0）
-  - 调用：`GET /api/mediaVisible/list`（`currentUserId=0`）
+  - 调用：`GET /api/media/visible/list`（`currentUserId=0`）
   - 支持按类型筛选：全部 / 图片 / 视频
   - 支持打开 `MediaDetailModal` 查看详情
 
@@ -97,7 +97,7 @@
      - 显示模式：条带模式（两行横向滚动）或网格模式（2行×4列）
      - 筛选：全部/图片/视频切换
      - 组件：`src/components/MemberMediaSection.vue`
-     - API调用：`GET /api/mediaVisible/list`（传入 `currentUserId=memberId` 参数）
+     - API调用：`GET /api/media/visible/list`（传入 `currentUserId=memberId` 参数）
   4. **树洞区**（`MemberTreeHoleSection`）
      - 功能：展示树洞消息列表；树洞主人可管理树洞状态（关闭/开放）、拉黑/解除拉黑留言发送者
      - 显示条件：已登录用户（level=0/1/2）
@@ -208,10 +208,10 @@
    - 当前访问的成员专区会高亮显示
 
 4. **热门内容下拉**（见下方「热门内容（NavBar）」小节）：
-   - 点击「热门内容」展开下拉弹窗，不跳转页面
-   - 标题行左侧「热门内容」，右侧筛选：全部 / 图片 / 视频
-   - 列表来自 `GET /api/mediaVisible/rank`，最多 20 条，每次展开都会重新请求以反映最新点赞
-   - 列表区域最大高度 50vh，可纵向滚动；点击某项跳转 `/media/:id` 并关闭下拉
+  - 点击「热门内容」展开下拉弹窗，不跳转页面
+  - 标题行左侧「热门内容」，右侧筛选：全部 / 图片 / 视频
+  - 列表来自 `GET /api/media/visible/rank`，最多 20 条，每次展开都会重新请求以反映最新点赞
+  - 列表区域最大高度 50vh，可纵向滚动；点击某项跳转 `/media/:id` 并关闭下拉
 
 5. **用户菜单下拉菜单**：
    - 修改密码、我的上传、资源管理（仅作者/管理员可见）、注销账号、退出登录
@@ -240,7 +240,7 @@
 ### 下拉内容
 
 - **标题行**：左侧文案「热门内容」，右侧筛选按钮 **全部 | 图片 | 视频**（与标题同一行）
-- **数据来源**：`GET /api/mediaVisible/rank`，参数 `category`（null=全部，0=图片，1=视频）、`size=20`
+- **数据来源**：`GET /api/media/visible/rank`，参数 `category`（null=全部，0=图片，1=视频）、`size=20`
 - **加载时机**：每次展开下拉时都会请求，保证点赞等操作后能看到最新排行榜
 - **列表**：每条展示排名、封面、标题（空则不显示）、点赞数；列表区域 `max-height: 50vh`，`overflow-y: auto` 可滚动
 - **点击列表项**：跳转 `/media/:id`（由 `MediaDetailPage` 承接），并关闭下拉

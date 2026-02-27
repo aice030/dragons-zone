@@ -23,7 +23,7 @@ import java.util.List;
  * @since 2026-01-17
  */
 @RestController
-@RequestMapping("/api/mediaVisible")
+@RequestMapping("/api/media/visible")
 public class MediaVisibleController {
 
     private final IMediaVisibleService mediaVisibleService;
@@ -88,7 +88,7 @@ public class MediaVisibleController {
      * 热门媒体列表（按点赞数降序 Top N，不做分页、不做专区）
      * 游客可访问，无需 token。
      *
-     * GET /api/mediaVisible/rank?category=0&size=20
+     * GET /api/media/visible/rank?category=0&size=20
      * category 可选：null/不传=全部，0=图片，1=视频
      * size 可选：默认 20，最大 100
      */
@@ -108,7 +108,7 @@ public class MediaVisibleController {
     /**
      * 根据媒体ID查询该媒体属于哪些成员专区
      *
-     * GET /api/mediaVisible/{mediaId}/zones
+     * GET /api/media/visible/{mediaId}/zones
      * 支持游客模式：未登录也可访问，无需请求头
      */
     @GetMapping("/{mediaId}/zones")

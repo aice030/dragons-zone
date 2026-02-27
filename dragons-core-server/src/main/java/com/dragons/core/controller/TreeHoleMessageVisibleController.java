@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  * @since 2026-02-02
  */
 @RestController
-@RequestMapping("/api/treeholeMessageVisible")
+@RequestMapping("/api/treehole/message/visible")
 public class TreeHoleMessageVisibleController {
 
     private final ITreeHoleMessageVisibleService treeHoleMessageVisibleService;
@@ -31,7 +31,7 @@ public class TreeHoleMessageVisibleController {
 
     /**
      * 获取“分享收件箱”列表：其他树洞主人分享给当前树洞主人的留言
-     * GET /api/treeholeMessageVisible/shared/list?page=1&size=10
+     * GET /api/treehole/message/visible/shared/list?page=1&size=10
      */
     @GetMapping("/shared/list")
     public Result<TreeHoleMessagePageResult> listSharedMessages(@AuthenticationPrincipal JwtPrincipal principal,
