@@ -172,7 +172,7 @@ public class MediaController {
         }
         List<Long> visibleUserIds = parseVisibleUserIds(visibleUserIdsJson);
         IMediaService.UploadResult result = mediaService.rebuildVisible(mediaId, visibleUserIds, principal.getUserId());
-        return Result.success("可见范围修复成功", result);
+        return Result.success("标签更新成功", result);
     }
 
     /**
