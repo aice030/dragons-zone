@@ -26,6 +26,7 @@ public class CorsConfig {
         // - 本地开发 Vite(5173)、本机 Docker(8081)
         // - ECS 前端端口 80：http://<ECS_IP> 或 http://<ECS_IP>:80
         config.addAllowedOrigin("http://localhost:5173");
+        config.addAllowedOrigin("http://localhost:8080");
         config.addAllowedOrigin("http://localhost:8081");
         config.addAllowedOrigin("http://47.118.26.94");
         config.addAllowedOrigin("http://47.118.26.94:80");

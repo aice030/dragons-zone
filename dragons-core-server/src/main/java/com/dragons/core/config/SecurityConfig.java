@@ -86,6 +86,7 @@ public class SecurityConfig {
         // - 本地 Vite(5173)、本机 Docker(8081)
         // - ECS 前端 80：http://<ECS_IP> 或 http://<ECS_IP>:80
         configuration.addAllowedOrigin("http://localhost:5173");
+        configuration.addAllowedOrigin("http://localhost:8080");
         configuration.addAllowedOrigin("http://localhost:8081");
         configuration.addAllowedOrigin("http://47.118.26.94");
         configuration.addAllowedOrigin("http://47.118.26.94:80");
