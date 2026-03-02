@@ -449,7 +449,7 @@
 
 **PUT** `/api/media/{id}/cover`
 
-上传新封面并更新数据库；仅上传者本人、仅视频文件且 state=0。先上传对象存储再更新 DB，DB 失败则补偿删除对象存储中的新封面。
+上传新封面并更新数据库；仅上传者本人、仅视频文件且 state 为 0/6/7。先上传对象存储再更新 DB，DB 失败则补偿删除对象存储中的新封面。
 
 **请求头**：`Authorization: Bearer <JWT_TOKEN>`，`Content-Type: multipart/form-data`
 

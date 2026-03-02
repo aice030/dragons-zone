@@ -793,7 +793,12 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         validateCoverExtension(cover);
 
         Media media = this.getById(mediaId);
-        if (media == null || media.getState() == null || media.getState() != 0) {
+        // 允许 state=0（正常）、state=6（待审核）、state=7（审核未通过）更新封面
+        if (media == null || media.getState() == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND);
+        }
+        Byte currentState = media.getState();
+        if (currentState != 0 && currentState != 6 && currentState != 7) {
             throw new BusinessException(ResponseCode.NOT_FOUND);
         }
         if (media.getUploaderId() == null || !media.getUploaderId().equals(currentUserId)) {
@@ -859,7 +864,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             // ignore
         }
         // 写时删除：封面变更，删除缓存
-        // updateCover 只允许 state=0 的媒体，更新后会变为 state=6，需要删除列表缓存与点赞相关缓存
+        // updateCover 只允许 state=0/6/7 的媒体，更新后会变为 state=6，需要删除列表缓存与点赞相关缓存
         try {
             redisCacheMediaCoreService.evictMediaCore(mediaId);
             evictMediaListCacheAllCategories(mediaId, true);
