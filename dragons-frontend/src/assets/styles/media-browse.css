@@ -537,12 +537,15 @@
   padding: 2rem 0;
   padding-top: 3.5rem; /* 增加顶部内边距，为右上角筛选按钮留出空间 */
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: var(--accent-color) transparent;
+  /* 保留滚动功能，但隐藏可见滚动条 */
+  scrollbar-width: none; /* Firefox */
+  scrollbar-color: transparent transparent;
 }
 
 .media-strip-wrapper::-webkit-scrollbar {
-  height: 8px;
+  height: 0; /* Safari / Chrome / Edge */
+  width: 0;
+  background: transparent;
 }
 
 .media-strip-wrapper::-webkit-scrollbar-track {
@@ -550,7 +553,7 @@
 }
 
 .media-strip-wrapper::-webkit-scrollbar-thumb {
-  background: var(--accent-color);
+  background: transparent;
   border-radius: 4px;
 }
 
