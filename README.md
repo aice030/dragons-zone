@@ -47,7 +47,7 @@
   - Java 17、Spring Boot 3.3.x
   - Spring Security + JWT 认证
   - MyBatis-Plus 3.5.x
-  - MySQL 8.0、Redis 8.0
+  - MySQL 8.0、Redis 7.0
   - 可选：RocketMQ（用于点赞异步落库等优化场景）
   - 对象存储：阿里云 OSS（默认）或 MinIO（可切换）
 
@@ -64,7 +64,7 @@
 - **JDK**：17
 - **Node.js**：20.19.0 或 22.12.0 及以上（参考 `dragons-frontend/package.json` 的 `engines` 字段）
 - **MySQL**：8.0（开发环境实际使用）
-- **Redis**：8.0（开发环境实际使用）
+- **Redis**：7.0（开发环境实际使用）
 - **Maven**：3.6+（本地开发时需要）
 - **Docker / Docker Compose**：用于快速本地启动前后端
 

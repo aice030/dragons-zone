@@ -54,6 +54,9 @@ build/
 # 本地密钥文件（勿提交）
 阿里云accessKey.txt
 
+# 本地问答文档（不提交）
+docs/Q&A.md
+
 # 前端项目（dragons-frontend）
 node_modules/
 dragons-frontend/dist/
