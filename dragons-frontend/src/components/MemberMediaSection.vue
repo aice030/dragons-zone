@@ -56,7 +56,7 @@
         @load-more="loadMore"
       />
 
-      <!-- 网格模式：固定 4 列 + 分页（每页 5 行） -->
+      <!-- 网格模式：固定 4 列 + 分页（每页 3 行，共 12 个） -->
       <div v-else class="media-grid-wrapper">
         <div class="media-grid">
           <MediaCard
@@ -122,11 +122,11 @@ const stripPage = ref(1)
 const stripSize = ref(10)
 const stripHasMore = ref(true)
 
-// 网格模式（分页：每页 5 行 * 4 列 = 20）
+// 网格模式（分页：每页 3 行 * 4 列 = 12）
 const gridMediaList = ref([])
 const gridLoading = ref(false)
 const gridPage = ref(1)
-const gridSize = ref(10)
+const gridSize = ref(12)
 const gridTotal = ref(0)
 const gridTotalPages = computed(() => Math.max(1, Math.ceil((gridTotal.value || 0) / gridSize.value)))
 
