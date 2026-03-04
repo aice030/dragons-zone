@@ -177,7 +177,14 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                     // 写入列表缓存（包含total和mediaIds）和 media:core 缓存
                     writeMediaListCache(zoneUserIdForCache, category, safePage, safeSize, total, records);
                 } else {
-                    // 获取锁失败，降级查询数据库（不写入缓存）
+                    // 获取锁失败：先做一次最终缓存检查，避免持锁线程已经回填缓存，当前请求仍落到DB
+                    MediaListCacheValue finalCheckCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
+                    MediaPageResult finalCheckResult = buildResultFromCache(finalCheckCachedList, zoneUserIdForCache, safePage, safeSize, category);
+                    if (finalCheckResult != null) {
+                        return finalCheckResult;
+                    }
+
+                    // 最终缓存检查仍未命中，降级查询数据库（不写入缓存）
                     log.warn("listMedia failed to acquire lock, falling back to direct DB query zoneUserId={} category={} page={} size={}", 
                             zoneUserIdForCache, category, safePage, safeSize);
                     
@@ -461,7 +468,14 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
                         queryAndWriteMediaCore(mediaId, cachedMediaMap);
                     }
                 } else {
-                    // 获取锁失败，降级查询数据库（不写入缓存）
+                    // 获取锁失败：先做一次最终缓存检查，避免持锁线程已经回填缓存，当前请求仍落到DB
+                    Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
+                    if (cachedMedia != null) {
+                        cachedMediaMap.put(mediaId, cachedMedia);
+                        continue;
+                    }
+
+                    // 最终缓存检查仍未命中，降级查询数据库（不写入缓存）
                     log.warn("listMedia failed to acquire lock for media core, falling back to direct DB query mediaId={}", mediaId);
                     Media media = mediaMapper.selectById(mediaId);
                     if (media != null && media.getState() != null && media.getState() == 0) {

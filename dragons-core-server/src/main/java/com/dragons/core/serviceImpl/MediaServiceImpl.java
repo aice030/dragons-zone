@@ -642,7 +642,15 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                     redisCacheMediaCoreService.putMediaCore(mediaId, media);
                 }
             } else {
-                // 获取锁失败，降级查询数据库（后续可以添加重试逻辑）
+                // 获取锁失败：先做一次最终缓存检查，避免持锁线程已经回填缓存，当前请求仍落到DB
+                cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
+                if (cachedMedia != null) {
+                    MediaDetailResult r = convertToMediaDetailResult(cachedMedia);
+                    r.likeCount = resolveLikeCount(mediaId, cachedMedia);
+                    return r;
+                }
+
+                // 最终缓存检查仍未命中，降级查询数据库（不写缓存，避免并发写入）
                 Media media = this.getById(mediaId);
                 if (media == null || media.getState() == null) {
                     throw new BusinessException(ResponseCode.NOT_FOUND);
