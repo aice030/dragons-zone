@@ -6,8 +6,10 @@ import com.dragons.core.entity.TreeHole;
 import com.dragons.core.dao.TreeHoleMapper;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.ITreeHoleService;
+import com.dragons.core.service.dbwrite.TreeHoleDbWriteService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,7 +24,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> implements ITreeHoleService {
 
-    private static final int WRITE_MAX_RETRIES = 3;
+    private final TreeHoleDbWriteService treeHoleDbWriteService;
+
+    @Autowired
+    public TreeHoleServiceImpl(TreeHoleDbWriteService treeHoleDbWriteService) {
+        this.treeHoleDbWriteService = treeHoleDbWriteService;
+    }
 
     @Override
     public void updateTreeHoleState(Long ownerId, Long currentUserId, Byte state) {
@@ -59,8 +66,10 @@ public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> i
 
         // 5) 更新状态（重试 3 次）
         treeHole.setState(state);
-        boolean updated = updateByIdWithRetry(treeHole);
-        if (!updated) {
+        try {
+            // 只调用写库服务，重试由 @DbWriteRetry 切面负责
+            treeHoleDbWriteService.updateById(treeHole);
+        } catch (Exception e) {
             log.error("updateTreeHoleState failed ownerId={} state={} reason=db_update_failed", ownerId, state);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
@@ -92,18 +101,5 @@ public class TreeHoleServiceImpl extends ServiceImpl<TreeHoleMapper, TreeHole> i
             log.info("getByOwnerId treehole not found ownerId={}", ownerId);
         }
         return result;
-    }
-
-    /** 写操作重试：最多 3 次，防止临时网络/锁冲突导致失败 */
-    private boolean updateByIdWithRetry(TreeHole treeHole) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.updateById(treeHole)) {
-                    return true;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        return false;
     }
 }

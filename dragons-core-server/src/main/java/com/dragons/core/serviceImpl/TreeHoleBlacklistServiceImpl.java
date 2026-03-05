@@ -7,6 +7,7 @@ import com.dragons.core.entity.TreeHoleBlacklist;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.service.ITreeHoleBlacklistService;
 import com.dragons.core.service.IUserService;
+import com.dragons.core.service.dbwrite.TreeHoleBlacklistDbWriteService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,8 +27,6 @@ import java.time.LocalDateTime;
 @Service
 public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistMapper, TreeHoleBlacklist> implements ITreeHoleBlacklistService {
 
-    private static final int WRITE_MAX_RETRIES = 3;
-
     /** 拉黑生效 */
     private static final byte STATE_ACTIVE = 0;
     /** 拉黑解除/失效 */
@@ -35,6 +34,8 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
 
     @Autowired
     private IUserService userService;
+    @Autowired
+    private TreeHoleBlacklistDbWriteService treeHoleBlacklistDbWriteService;
 
     @Override
     public void addBlock(Long ownerId, Long blockedUserId, String reason) {
@@ -66,7 +67,10 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
             if (reason != null) {
                 existing.setReason(reason.trim().isEmpty() ? null : reason.trim());
             }
-            if (!updateByIdWithRetry(existing)) {
+            try {
+                // 交由独立写库服务执行；重试由 @DbWriteRetry 切面自动完成
+                treeHoleBlacklistDbWriteService.updateById(existing);
+            } catch (Exception e) {
                 log.error("addBlock failed ownerId={} blockedUserId={} reason=db_update_reactivate_failed", ownerId, blockedUserId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
@@ -80,35 +84,13 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
         one.setState(STATE_ACTIVE);
         one.setReason(reason != null && !reason.trim().isEmpty() ? reason.trim() : null);
         one.setUpdateTime(LocalDateTime.now());
-        if (!saveWithRetry(one)) {
+        try {
+            treeHoleBlacklistDbWriteService.insert(one);
+        } catch (Exception e) {
             log.error("addBlock failed ownerId={} blockedUserId={} reason=db_insert_failed", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
         log.info("treehole block success ownerId={} blockedUserId={} action=insert", ownerId, blockedUserId);
-    }
-
-    private boolean saveWithRetry(TreeHoleBlacklist entity) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.save(entity)) {
-                    return true;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        return false;
-    }
-
-    private boolean updateByIdWithRetry(TreeHoleBlacklist entity) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.updateById(entity)) {
-                    return true;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        return false;
     }
 
     @Override
@@ -131,7 +113,9 @@ public class TreeHoleBlacklistServiceImpl extends ServiceImpl<TreeHoleBlacklistM
         }
         existing.setState(STATE_INACTIVE);
         existing.setUpdateTime(LocalDateTime.now());
-        if (!updateByIdWithRetry(existing)) {
+        try {
+            treeHoleBlacklistDbWriteService.updateById(existing);
+        } catch (Exception e) {
             log.error("removeBlock failed ownerId={} blockedUserId={} reason=db_update_failed", ownerId, blockedUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }

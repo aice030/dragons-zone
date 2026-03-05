@@ -35,6 +35,12 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- AOP（用于DB写入重试切面） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
         <!-- 引入MyBatis-Plus（适配SpringBoot 3.3.x） -->
         <dependency>
             <groupId>com.baomidou</groupId>

@@ -49,3 +49,11 @@ oss:
     role-arn: acs:ram::你的账号ID:role/你的角色名
     role-session-name: dragons-frontend-upload
     duration-seconds: 3600
+
+# DB 写入重试配置（AOP）
+db-retry:
+  max-attempts: 3
+  initial-delay-ms: 100
+  max-delay-ms: 1000
+  multiplier: 2.0
+  jitter-ratio: 0.2

@@ -10,6 +10,7 @@ import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.exception.BusinessException;
 import com.dragons.core.entity.User;
 import com.dragons.core.service.IUserService;
+import com.dragons.core.service.dbwrite.UserDbWriteService;
 import com.dragons.core.util.JwtUtil;
 import com.dragons.core.util.PasswordUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -35,10 +36,9 @@ import java.util.regex.Pattern;
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IUserService {
 
-    private static final int WRITE_MAX_RETRIES = 3;
-
     private final PasswordUtil passwordUtil;
     private final JwtUtil jwtUtil;
+    private final UserDbWriteService userDbWriteService;
 
     /**
      * 手机号正则表达式（11位数字）
@@ -51,9 +51,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
      * 注意：Spring 4.3+ 如果类只有一个构造函数，可以省略 @Autowired 注解
      */
     @Autowired
-    public UserServiceImpl(PasswordUtil passwordUtil, JwtUtil jwtUtil) {
+    public UserServiceImpl(PasswordUtil passwordUtil, JwtUtil jwtUtil, UserDbWriteService userDbWriteService) {
         this.passwordUtil = passwordUtil;
         this.jwtUtil = jwtUtil;
+        this.userDbWriteService = userDbWriteService;
     }
 
     @Override
@@ -101,6 +102,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public RegisterResult register(RegisterRequest request) {
+        // 业务路径（注册）：
+        // 1) 参数与唯一性校验 -> 2) 组装用户默认值 -> 3) 写库 -> 4) 返回最小必要信息
         // 1. 验证手机号格式
         if (!PHONE_PATTERN.matcher(request.getPhoneNumber()).matches()) {
             log.warn("register failed loginName={} reason=phone_format_invalid", request.getLoginName());
@@ -139,7 +142,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         user.setUpdateTime(LocalDateTime.now());
 
         // 6. 保存用户（重试 3 次）
-        if (!saveWithRetry(user)) {
+        try {
+            // 调用独立写库服务；重试由 @DbWriteRetry 切面自动处理
+            userDbWriteService.insert(user);
+        } catch (Exception e) {
             log.error("register failed loginName={} reason=db_insert_failed", request.getLoginName());
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
@@ -149,6 +155,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public void deregister(Long userId, String password) {
+        // 业务路径（注销）：
+        // 1) 校验账号与密码 -> 2) 逻辑删除字段更新 -> 3) 写库持久化
         // 1. 查询用户
         User user = this.getById(userId);
         if (user == null) {
@@ -173,7 +181,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         user.setNickName("用户" + user.getId() + "已注销");
         user.setPhoneNumber("deleted_" + user.getId());
         user.setUpdateTime(LocalDateTime.now());
-        if (!updateByIdWithRetry(user)) {
+        try {
+            // 逻辑注销只做 DB 更新；失败由切面重试后再进入异常分支
+            userDbWriteService.updateById(user);
+        } catch (Exception e) {
             log.error("deregister failed userId={} reason=db_update_failed", userId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
@@ -182,6 +193,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public void resetPasswordByPhone(Long currentUserId, String phoneNumber, String newPassword) {
+        // 业务路径（登录态改密）：
+        // 1) 校验登录态和新密码 -> 2) 校验手机号归属 -> 3) 更新密码
         if (currentUserId == null) {
             log.warn("resetPasswordByPhone denied reason=currentUserId_null");
             throw new BusinessException(ResponseCode.UNAUTHORIZED);
@@ -230,7 +243,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String encodedPassword = passwordUtil.encode(newPassword);
         user.setPassword(encodedPassword);
         user.setUpdateTime(LocalDateTime.now());
-        if (!updateByIdWithRetry(user)) {
+        try {
+            userDbWriteService.updateById(user);
+        } catch (Exception e) {
             log.error("resetPasswordByPhone failed userId={} reason=db_update_failed", currentUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
@@ -239,6 +254,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public void forgotPassword(String loginName, String phoneNumber, String newPassword) {
+        // 业务路径（未登录找回密码）：
+        // 1) 参数校验 -> 2) 登录名+手机号联合校验身份 -> 3) 更新密码
         // 1) 参数校验
         if (!StringUtils.hasText(loginName) || !StringUtils.hasText(phoneNumber)) {
             log.warn("forgotPassword invalid params loginName={} reason=empty_params", loginName);
@@ -286,42 +303,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String encodedPassword = passwordUtil.encode(newPassword);
         user.setPassword(encodedPassword);
         user.setUpdateTime(LocalDateTime.now());
-        if (!updateByIdWithRetry(user)) {
+        try {
+            userDbWriteService.updateById(user);
+        } catch (Exception e) {
             log.error("forgotPassword failed loginName={} userId={} reason=db_update_failed", loginName, user.getId());
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
         log.info("forgotPassword success loginName={}", loginName.trim());
-    }
-
-    /** 写操作重试：最多 3 次，防止临时网络/锁冲突导致失败 */
-    private boolean saveWithRetry(User user) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.save(user)) {
-                    return true;
-                }
-            } catch (Exception e) {
-                if (i == WRITE_MAX_RETRIES - 1) {
-                    log.error("saveWithRetry failed after {} retries userId={} loginName={}", WRITE_MAX_RETRIES, user.getId(), user.getLoginName(), e);
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean updateByIdWithRetry(User user) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.updateById(user)) {
-                    return true;
-                }
-            } catch (Exception e) {
-                if (i == WRITE_MAX_RETRIES - 1) {
-                    log.error("updateByIdWithRetry failed after {} retries userId={}", WRITE_MAX_RETRIES, user.getId(), e);
-                }
-            }
-        }
-        return false;
     }
 
     /**
@@ -368,7 +356,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 更新用户等级
         targetUser.setLevel(newLevel);
         targetUser.setUpdateTime(LocalDateTime.now());
-        if (!updateByIdWithRetry(targetUser)) {
+        try {
+            userDbWriteService.updateById(targetUser);
+        } catch (Exception e) {
             log.error("updateUserLevel failed currentUserId={} targetUserId={} newLevel={} reason=db_update_failed", currentUserId, targetUserId, newLevel);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
@@ -399,7 +389,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 更新用户状态
         targetUser.setState(newState);
         targetUser.setUpdateTime(LocalDateTime.now());
-        if (!updateByIdWithRetry(targetUser)) {
+        try {
+            userDbWriteService.updateById(targetUser);
+        } catch (Exception e) {
             log.error("updateUserState failed currentUserId={} targetUserId={} newState={} reason=db_update_failed", currentUserId, targetUserId, newState);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }

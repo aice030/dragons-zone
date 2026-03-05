@@ -15,6 +15,7 @@ import com.dragons.core.service.ITreeHoleMessageService;
 import com.dragons.core.service.ITreeHoleMessageVisibleService;
 import com.dragons.core.service.ITreeHoleService;
 import com.dragons.core.service.IUserService;
+import com.dragons.core.service.dbwrite.TreeHoleMessageVisibleDbWriteService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -39,22 +40,23 @@ public class TreeHoleMessageVisibleServiceImpl
         extends ServiceImpl<TreeHoleMessageVisibleMapper, TreeHoleMessageVisible>
         implements ITreeHoleMessageVisibleService {
 
-    private static final int WRITE_MAX_RETRIES = 3;
-
     private final ITreeHoleService treeHoleService;
     private final ITreeHoleMessageService treeHoleMessageService;
     private final IUserService userService;
     private final ITreeHoleBlacklistService treeHoleBlacklistService;
+    private final TreeHoleMessageVisibleDbWriteService treeHoleMessageVisibleDbWriteService;
 
     @Autowired
     public TreeHoleMessageVisibleServiceImpl(ITreeHoleService treeHoleService,
                                              ITreeHoleMessageService treeHoleMessageService,
                                              IUserService userService,
-                                             ITreeHoleBlacklistService treeHoleBlacklistService) {
+                                             ITreeHoleBlacklistService treeHoleBlacklistService,
+                                             TreeHoleMessageVisibleDbWriteService treeHoleMessageVisibleDbWriteService) {
         this.treeHoleService = treeHoleService;
         this.treeHoleMessageService = treeHoleMessageService;
         this.userService = userService;
         this.treeHoleBlacklistService = treeHoleBlacklistService;
+        this.treeHoleMessageVisibleDbWriteService = treeHoleMessageVisibleDbWriteService;
     }
 
     @Override
@@ -135,7 +137,10 @@ public class TreeHoleMessageVisibleServiceImpl
             treeHoleMessageVisible.setMessageId(messageId);
             treeHoleMessageVisible.setOwnerId(targetOwnerId);
             treeHoleMessageVisible.setSharedByUserId(currentUserId);
-            if (!saveWithRetry(treeHoleMessageVisible)) {
+            try {
+                // 分享写入由独立写库服务处理，重试由 @DbWriteRetry 切面完成
+                treeHoleMessageVisibleDbWriteService.insert(treeHoleMessageVisible);
+            } catch (Exception e) {
                 log.error("shareMessage db insert failed messageId={} targetOwnerId={}", messageId, targetOwnerId);
                 failedOwnerIds.add(targetOwnerId);
             }
@@ -156,20 +161,4 @@ public class TreeHoleMessageVisibleServiceImpl
         log.info("treehole share success messageId={} targetCount={}", messageId, distinctTargets.size());
     }
 
-    /** 写操作重试：最多 3 次，防止临时网络/锁冲突导致失败 */
-    private boolean saveWithRetry(TreeHoleMessageVisible visible) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.save(visible)) {
-                    return true;
-                }
-            } catch (Exception e) {
-                if (i == WRITE_MAX_RETRIES - 1) {
-                    log.error("saveWithRetry failed after {} retries messageId={} ownerId={}", WRITE_MAX_RETRIES, visible.getMessageId(), visible.getOwnerId(), e);
-                }
-            }
-        }
-        return false;
-    }
 }
-

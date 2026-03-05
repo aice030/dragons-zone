@@ -15,6 +15,7 @@ import com.dragons.core.service.ITreeHoleBlacklistService;
 import com.dragons.core.service.ITreeHoleMessageService;
 import com.dragons.core.service.ITreeHoleService;
 import com.dragons.core.service.IUserService;
+import com.dragons.core.service.dbwrite.TreeHoleMessageDbWriteService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,7 +46,6 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     private static final byte STATE_REPLIED = 3;
     private static final byte TREE_HOLE_STATE_FORBIDDEN = 2;
     private static final byte BLACKLIST_STATE_ACTIVE = 0;
-    private static final int WRITE_MAX_RETRIES = 3;
 
     @Autowired
     private ITreeHoleService treeHoleService;
@@ -55,9 +55,14 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     private TransactionTemplate transactionTemplate;
     @Autowired
     private IUserService userService;
+    @Autowired
+    private TreeHoleMessageDbWriteService treeHoleMessageDbWriteService;
 
     @Override
     public Long sendMessage(Long ownerId, Long senderUserId, String content, Long rootMessageId) {
+        // 业务路径（树洞发消息）：
+        // - rootMessageId 为空：用户投递新留言
+        // - rootMessageId 非空：树洞主人回复已有留言（仅允许一次回复）
         // 参数校验
         if (ownerId == null || ownerId <= 0 || senderUserId == null || senderUserId <= 0) {
             log.warn("sendMessage invalid params ownerId={} senderUserId={}", ownerId, senderUserId);
@@ -120,6 +125,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
     private Long doDeliverNewMessage(TreeHole treeHole, Long senderUserId, String content) {
         Long ownerId = treeHole.getOwnerId();
         return transactionTemplate.execute(status -> {
+            // 流程目标：在同一事务内完成“加锁校验 + 防刷校验 + 插入留言”，避免并发穿透
             // 1) 对树洞行加锁，同一树洞的投递需要排队执行，保证 count+insert 原子性
             TreeHole locked = treeHoleService.getByOwnerIdForUpdate(ownerId);
             if (locked == null) {
@@ -178,6 +184,7 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         Long rootMessageId = rootMessage.getId();
         // 开启编程式事务
         return transactionTemplate.execute(status -> {
+            // 流程目标：回复插入与根消息状态更新要么同时成功，要么同时失败
             TreeHoleMessage reply = new TreeHoleMessage();
             reply.setTreeHoleId(treeHole.getId());
             reply.setTreeHoleOwnerId(ownerId);
@@ -319,8 +326,10 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
             // 无回复：仅更新根留言
             treeHoleMessage.setSenderDeleted((byte) 1);
             treeHoleMessage.setUpdateTime(now);
-            boolean updated = updateByIdWithRetry(treeHoleMessage);
-            if (!updated) {
+            try {
+                // 根留言单条更新统一交给写库服务，重试由切面处理
+                treeHoleMessageDbWriteService.updateById(treeHoleMessage);
+            } catch (Exception e) {
                 log.error("deleteMessageBySender failed messageId={} senderUserId={} reason=db_update_failed", messageId, senderUserId);
                 throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
             }
@@ -335,6 +344,9 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
      * - targetState=2：全局删除（重复删除幂等）；若有 root_message_id=messageId 的回复，一并置为已删除
      */
     private void updateOwnerMessageState(Long messageId, Long ownerUserId, byte targetState) {
+        // 业务路径（主人更新留言状态）：
+        // - READ：单条幂等更新
+        // - DELETED：若有回复则“删回复+删根”同事务执行；无回复则单条更新
         if (messageId == null || messageId <= 0 || ownerUserId == null) {
             log.warn("updateOwnerMessageState invalid params messageId={} ownerUserId={} targetState={}", messageId, ownerUserId, targetState);
             throw new BusinessException(ResponseCode.BAD_REQUEST);
@@ -393,8 +405,9 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
                 // 无回复：仅更新根留言，无需事务
                 treeHoleMessage.setState(STATE_DELETED);
                 treeHoleMessage.setUpdateTime(now);
-                boolean updated = updateByIdWithRetry(treeHoleMessage);
-                if (!updated) {
+                try {
+                    treeHoleMessageDbWriteService.updateById(treeHoleMessage);
+                } catch (Exception e) {
                     log.error("updateOwnerMessageState delete failed messageId={} ownerUserId={} reason=db_update_failed", messageId, ownerUserId);
                     throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
                 }
@@ -408,22 +421,11 @@ public class TreeHoleMessageServiceImpl extends ServiceImpl<TreeHoleMessageMappe
         // 仅 STATE_READ 会执行到此：单条更新
         treeHoleMessage.setState(targetState);
         treeHoleMessage.setUpdateTime(LocalDateTime.now());
-        boolean updated = updateByIdWithRetry(treeHoleMessage);
-        if (!updated) {
+        try {
+            treeHoleMessageDbWriteService.updateById(treeHoleMessage);
+        } catch (Exception e) {
             log.error("updateOwnerMessageState read failed messageId={} ownerUserId={} reason=db_update_failed", messageId, ownerUserId);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
         }
-    }
-
-    private boolean updateByIdWithRetry(TreeHoleMessage message) {
-        for (int i = 0; i < WRITE_MAX_RETRIES; i++) {
-            try {
-                if (this.updateById(message)) {
-                    return true;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        return false;
     }
 }
