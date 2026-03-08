@@ -7,6 +7,7 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DeadlockLoserDataAccessException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.stereotype.Component;
 
@@ -74,9 +75,11 @@ public class DbWriteRetryAspect {
         }
 
         // 向上遍历 cause 链，识别底层数据库瞬时异常
+        // PessimisticLockingFailureException 为 Spring 6 推荐替代（死锁/加锁失败）；保留 DeadlockLoserDataAccessException 以兼容旧版本抛出
         Throwable cursor = ex;
         while (cursor != null) {
             if (cursor instanceof DeadlockLoserDataAccessException
+                    || cursor instanceof PessimisticLockingFailureException
                     || cursor instanceof CannotAcquireLockException
                     || cursor instanceof TransientDataAccessException
                     || cursor instanceof SQLTransientException

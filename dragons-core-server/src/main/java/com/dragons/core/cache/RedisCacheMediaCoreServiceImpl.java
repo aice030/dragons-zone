@@ -41,11 +41,11 @@ public class RedisCacheMediaCoreServiceImpl implements RedisCacheMediaCoreServic
         try {
             Object value = redisTemplate.opsForValue().get(key);
             if (value instanceof Media) {
-                log.info("media core cache hit mediaId={}", mediaId);
+                log.debug("media core cache hit mediaId={}", mediaId);
                 return (Media) value;
             }
             if (value instanceof String && NULL_VALUE_MARKER.equals(value)) {
-                log.info("media core null value cache hit mediaId={}", mediaId);
+                log.debug("media core null value cache hit mediaId={}", mediaId);
                 return null;
             }
         } catch (Exception e) {
@@ -67,7 +67,7 @@ public class RedisCacheMediaCoreServiceImpl implements RedisCacheMediaCoreServic
         String key = MEDIA_CORE_KEY_PREFIX + mediaId;
         try {
             redisTemplate.opsForValue().set(key, toCache, MEDIA_CORE_TTL_SECONDS, TimeUnit.SECONDS);
-            log.info("media core cache put mediaId={}", mediaId);
+            log.debug("media core cache put mediaId={}", mediaId);
         } catch (Exception e) {
             log.error("media core cache put failed mediaId={} error={}", mediaId, e.getMessage());
         }
@@ -140,7 +140,7 @@ public class RedisCacheMediaCoreServiceImpl implements RedisCacheMediaCoreServic
         String key = MEDIA_CORE_KEY_PREFIX + mediaId;
         try {
             redisTemplate.opsForValue().set(key, NULL_VALUE_MARKER, NULL_VALUE_TTL_SECONDS, TimeUnit.SECONDS);
-            log.info("media core null value cache put mediaId={}", mediaId);
+            log.debug("media core null value cache put mediaId={}", mediaId);
         } catch (Exception e) {
             log.error("media core null value cache put failed mediaId={} error={}", mediaId, e.getMessage());
         }
@@ -160,7 +160,7 @@ public class RedisCacheMediaCoreServiceImpl implements RedisCacheMediaCoreServic
         try {
             Boolean success = redisTemplate.opsForValue().setIfAbsent(key, requestId, LOCK_TTL_SECONDS, TimeUnit.SECONDS);
             if (Boolean.TRUE.equals(success)) {
-                log.info("distributed lock acquired mediaId={} requestId={}", mediaId, requestId);
+                log.debug("distributed lock acquired mediaId={} requestId={}", mediaId, requestId);
                 return true;
             }
             log.warn("distributed lock already held by another request mediaId={}", mediaId);
@@ -192,7 +192,7 @@ public class RedisCacheMediaCoreServiceImpl implements RedisCacheMediaCoreServic
             script.setResultType(Long.class);
             Long result = redisTemplate.execute(script, Collections.singletonList(key), requestId);
             if (result != null && result > 0) {
-                log.info("distributed lock released mediaId={} requestId={}", mediaId, requestId);
+                log.debug("distributed lock released mediaId={} requestId={}", mediaId, requestId);
             } else {
                 log.warn("distributed lock release failed: lock not held by this request mediaId={} requestId={}", mediaId, requestId);
             }

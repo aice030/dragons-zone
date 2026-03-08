@@ -97,7 +97,7 @@ public class RedisCacheMediaListServiceImpl implements RedisCacheMediaListServic
             Object value = redisTemplate.opsForValue().get(key);
             if (value instanceof MediaListCacheValue) {
                 MediaListCacheValue cacheValue = (MediaListCacheValue) value;
-                log.info("media list cache hit zoneUserId={} category={} page={} size={} total={} count={}",
+                log.debug("media list cache hit zoneUserId={} category={} page={} size={} total={} count={}",
                         zoneUserId, category, page, size, cacheValue.getTotal(),
                         cacheValue.getMediaIds() != null ? cacheValue.getMediaIds().size() : 0);
                 return cacheValue;
@@ -121,7 +121,7 @@ public class RedisCacheMediaListServiceImpl implements RedisCacheMediaListServic
         try {
             MediaListCacheValue cacheValue = new MediaListCacheValue(total, mediaIds);
             redisTemplate.opsForValue().set(key, cacheValue, MEDIA_LIST_TTL_SECONDS, TimeUnit.SECONDS);
-            log.info("media list cache put zoneUserId={} category={} page={} size={} total={} count={}",
+            log.debug("media list cache put zoneUserId={} category={} page={} size={} total={} count={}",
                     zoneUserId, category, page, size, total, mediaIds.size());
         } catch (Exception e) {
             log.error("media list cache put failed zoneUserId={} category={} page={} size={} error={}",
@@ -159,7 +159,7 @@ public class RedisCacheMediaListServiceImpl implements RedisCacheMediaListServic
             Object value = redisTemplate.opsForValue().get(key);
             if (value instanceof MediaListCacheValue) {
                 MediaListCacheValue cacheValue = (MediaListCacheValue) value;
-                log.info("my upload list cache hit uploaderId={} category={} page={} size={} total={} count={}",
+                log.debug("my upload list cache hit uploaderId={} category={} page={} size={} total={} count={}",
                         uploaderId, category, page, size, cacheValue.getTotal(),
                         cacheValue.getMediaIds() != null ? cacheValue.getMediaIds().size() : 0);
                 return cacheValue;
@@ -183,7 +183,7 @@ public class RedisCacheMediaListServiceImpl implements RedisCacheMediaListServic
         try {
             MediaListCacheValue cacheValue = new MediaListCacheValue(total, mediaIds);
             redisTemplate.opsForValue().set(key, cacheValue, MEDIA_LIST_TTL_SECONDS, TimeUnit.SECONDS);
-            log.info("my upload list cache put uploaderId={} category={} page={} size={} total={} count={}",
+            log.debug("my upload list cache put uploaderId={} category={} page={} size={} total={} count={}",
                     uploaderId, category, page, size, total, mediaIds.size());
         } catch (Exception e) {
             log.error("my upload list cache put failed uploaderId={} category={} page={} size={} error={}",
@@ -228,7 +228,7 @@ public class RedisCacheMediaListServiceImpl implements RedisCacheMediaListServic
         try {
             Boolean success = redisTemplate.opsForValue().setIfAbsent(key, requestId, LOCK_TTL_SECONDS, TimeUnit.SECONDS);
             if (Boolean.TRUE.equals(success)) {
-                log.info("distributed lock acquired for media list zoneUserId={} category={} page={} size={} requestId={}",
+                log.debug("distributed lock acquired for media list zoneUserId={} category={} page={} size={} requestId={}",
                         zoneUserId, category, page, size, requestId);
                 return true;
             }
@@ -275,7 +275,7 @@ public class RedisCacheMediaListServiceImpl implements RedisCacheMediaListServic
         try {
             Boolean success = redisTemplate.opsForValue().setIfAbsent(key, requestId, LOCK_TTL_SECONDS, TimeUnit.SECONDS);
             if (Boolean.TRUE.equals(success)) {
-                log.info("distributed lock acquired for my upload list uploaderId={} category={} page={} size={} requestId={}",
+                log.debug("distributed lock acquired for my upload list uploaderId={} category={} page={} size={} requestId={}",
                         uploaderId, category, page, size, requestId);
                 return true;
             }
@@ -316,7 +316,7 @@ public class RedisCacheMediaListServiceImpl implements RedisCacheMediaListServic
             script.setResultType(Long.class);
             Long result = redisTemplate.execute(script, Collections.singletonList(key), requestId);
             if (result != null && result > 0) {
-                log.info("distributed lock released for {} {}", label, logKey);
+                log.debug("distributed lock released for {} {}", label, logKey);
             } else {
                 log.warn("distributed lock release failed: lock not held by this request {} {}", label, logKey);
             }

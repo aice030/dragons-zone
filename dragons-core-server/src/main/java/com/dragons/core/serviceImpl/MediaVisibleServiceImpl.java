@@ -8,6 +8,7 @@ import com.dragons.core.entity.Media;
 import com.dragons.core.dao.MediaMapper;
 import com.dragons.core.dto.ResponseCode;
 import com.dragons.core.exception.BusinessException;
+import com.dragons.core.lock.RedisLockFacade;
 import com.dragons.core.service.IMediaVisibleService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.dragons.core.storage.StorageService;
@@ -19,10 +20,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.UUID;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -42,17 +39,20 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
     private final RedisCacheMediaCoreService redisCacheMediaCoreService;
     private final RedisCacheMediaListService redisCacheMediaListService;
     private final RedisCacheMediaLikeService redisCacheMediaLikeService;
+    private final RedisLockFacade redisLockFacade;
 
     @Autowired
     public MediaVisibleServiceImpl(MediaMapper mediaMapper, StorageService storageService,
                                    RedisCacheMediaCoreService redisCacheMediaCoreService,
                                    RedisCacheMediaListService redisCacheMediaListService,
-                                   RedisCacheMediaLikeService redisCacheMediaLikeService) {
+                                   RedisCacheMediaLikeService redisCacheMediaLikeService,
+                                   RedisLockFacade redisLockFacade) {
         this.mediaMapper = mediaMapper;
         this.storageService = storageService;
         this.redisCacheMediaCoreService = redisCacheMediaCoreService;
         this.redisCacheMediaListService = redisCacheMediaListService;
         this.redisCacheMediaLikeService = redisCacheMediaLikeService;
+        this.redisLockFacade = redisLockFacade;
     }
 
     @Override
@@ -109,108 +109,42 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
             // media:list 缓存未命中：尝试获取分布式锁，防止缓存击穿
             log.info("listMedia cache miss zoneUserId={} category={} page={} size={}", 
                     zoneUserIdForCache, category, safePage, safeSize);
-            
-            // media:list 缓存未命中：尝试获取分布式锁，防止缓存击穿
-            boolean lockAcquired = false;
-            String requestId = UUID.randomUUID().toString();
-            // 锁续期线程池
-            ScheduledExecutorService lockRenewalExecutor = null;
-            
-            try {
-                // 1. 尝试获取分布式锁（最多重试3次）
-                for (int retryCount = 0; retryCount < 3; retryCount++) {
-                    lockAcquired = redisCacheMediaListService.tryLockMediaList(zoneUserIdForCache, category, safePage, safeSize, requestId);
-                    if (lockAcquired) {
-                        // 获取锁成功，启动后台线程自动续期（WatchDog机制）
-                        // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
-                        final Long finalZoneUserIdForCache = zoneUserIdForCache;
-                        final Byte finalCategory = category;
-                        final int finalSafePage = safePage;
-                        final int finalSafeSize = safeSize;
-                        final String finalRequestId = requestId;
-                        lockRenewalExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                            Thread t = new Thread(r, "lock-renewal-list-" + finalZoneUserIdForCache + "-" + finalCategory + "-" + finalSafePage + "-" + finalSafeSize);
-                            t.setDaemon(true);
-                            return t;
-                        });
-                        lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                            boolean renewed = redisCacheMediaListService.renewLockMediaList(finalZoneUserIdForCache, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
-                            if (!renewed) {
-                                log.warn("lock renewal failed for media list, lock may have been released zoneUserId={} category={} page={} size={} requestId={}", 
-                                        finalZoneUserIdForCache, finalCategory, finalSafePage, finalSafeSize, finalRequestId);
-                            }
-                        }, 0, 2, TimeUnit.SECONDS); // 立即开始，每2秒执行一次
-                        break; // 获取成功，跳出循环
-                    }
-                    // 获取锁失败，等待100ms后重试查询缓存
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        log.warn("lock retry interrupted zoneUserId={} category={} page={} size={}", 
-                                zoneUserIdForCache, category, safePage, safeSize);
-                        break;
-                    }
-                    // 重试查询缓存，可能其他线程已经写入
-                    MediaListCacheValue retryCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
-                    MediaPageResult retryResult = buildResultFromCache(retryCachedList, zoneUserIdForCache, safePage, safeSize, category);
-                    if (retryResult != null) {
-                        // 缓存已命中，直接返回（不需要释放锁，因为没获取到）
-                        return retryResult;
-                    }
-                }
-                
-                if (lockAcquired) {
-                    // 2. 获取到分布式锁后，再次查询缓存（双重检测）
-                    MediaListCacheValue doubleCheckCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
-                    MediaPageResult doubleCheckResult = buildResultFromCache(doubleCheckCachedList, zoneUserIdForCache, safePage, safeSize, category);
-                    if (doubleCheckResult != null) {
-                        // 其他线程已经写入缓存，直接返回（需要释放锁）
-                        return doubleCheckResult;
-                    }
-                    
-                    // 3. 缓存仍未命中，从数据库查询并写入缓存
-                    MediaListQueryResult queryResult = queryMediaListFromDB(zoneUserIdForCache, category, safePage, safeSize);
-                    total = queryResult.total;
-                    records = queryResult.records;
-                    
-                    // 写入列表缓存（包含total和mediaIds）和 media:core 缓存
-                    writeMediaListCache(zoneUserIdForCache, category, safePage, safeSize, total, records);
-                } else {
-                    // 获取锁失败：先做一次最终缓存检查，避免持锁线程已经回填缓存，当前请求仍落到DB
-                    MediaListCacheValue finalCheckCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
-                    MediaPageResult finalCheckResult = buildResultFromCache(finalCheckCachedList, zoneUserIdForCache, safePage, safeSize, category);
-                    if (finalCheckResult != null) {
-                        return finalCheckResult;
-                    }
 
-                    // 最终缓存检查仍未命中，降级查询数据库（不写入缓存）
-                    log.warn("listMedia failed to acquire lock, falling back to direct DB query zoneUserId={} category={} page={} size={}", 
-                            zoneUserIdForCache, category, safePage, safeSize);
-                    
-                    MediaListQueryResult queryResult = queryMediaListFromDB(zoneUserIdForCache, category, safePage, safeSize);
-                    total = queryResult.total;
-                    records = queryResult.records;
-                }
-            } finally {
-                // 停止锁续期线程
-                if (lockRenewalExecutor != null) {
-                    lockRenewalExecutor.shutdown();
-                    try {
-                        // 等待最多1秒，确保续期任务完成
-                        if (!lockRenewalExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
-                            lockRenewalExecutor.shutdownNow();
+            // 锁生命周期由 AOP 托管；业务代码只关注“拿到锁/没拿到锁”后的分支策略
+            MediaPageResult missResult = redisLockFacade.withMediaListLock(
+                    zoneUserIdForCache,
+                    category,
+                    safePage,
+                    safeSize,
+                    lockCtx -> {
+                        if (lockCtx.isLockAcquired()) {
+                            // 1) 获取到锁后做双重检测，避免重复查库
+                            MediaListCacheValue doubleCheckCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
+                            MediaPageResult doubleCheckResult = buildResultFromCache(doubleCheckCachedList, zoneUserIdForCache, safePage, safeSize, category);
+                            if (doubleCheckResult != null) {
+                                return doubleCheckResult;
+                            }
+
+                            // 2) 缓存仍未命中：查库并回填缓存
+                            MediaListQueryResult queryResult = queryMediaListFromDB(zoneUserIdForCache, category, safePage, safeSize);
+                            writeMediaListCache(zoneUserIdForCache, category, safePage, safeSize, queryResult.total, queryResult.records);
+                            return buildMediaPageResult(queryResult.records, queryResult.total, zoneUserIdForCache, safePage, safeSize, category);
                         }
-                    } catch (InterruptedException e) {
-                        lockRenewalExecutor.shutdownNow();
-                        Thread.currentThread().interrupt();
+
+                        // 3) 获取锁失败：最终缓存检查 -> 降级查库（不回填）
+                        MediaListCacheValue finalCheckCachedList = redisCacheMediaListService.getMediaList(zoneUserIdForCache, category, safePage, safeSize);
+                        MediaPageResult finalCheckResult = buildResultFromCache(finalCheckCachedList, zoneUserIdForCache, safePage, safeSize, category);
+                        if (finalCheckResult != null) {
+                            return finalCheckResult;
+                        }
+
+                        log.warn("listMedia failed to acquire lock, falling back to direct DB query zoneUserId={} category={} page={} size={}",
+                                zoneUserIdForCache, category, safePage, safeSize);
+                        MediaListQueryResult queryResult = queryMediaListFromDB(zoneUserIdForCache, category, safePage, safeSize);
+                        return buildMediaPageResult(queryResult.records, queryResult.total, zoneUserIdForCache, safePage, safeSize, category);
                     }
-                }
-                // 释放分布式锁
-                if (lockAcquired) {
-                    redisCacheMediaListService.unlockMediaList(zoneUserIdForCache, category, safePage, safeSize, requestId);
-                }
-            }
+            );
+            return missResult;
         }
 
         // 构建返回结果
@@ -413,94 +347,34 @@ public class MediaVisibleServiceImpl extends ServiceImpl<MediaVisibleMapper, Med
         }
         
         for (Long mediaId : missingIds) {
-            boolean lockAcquired = false;
-            String requestId = UUID.randomUUID().toString();
-            // 锁续期线程池
-            ScheduledExecutorService lockRenewalExecutor = null;
-            
-            try {
-                // 1. 尝试获取分布式锁（最多重试3次）
-                for (int retryCount = 0; retryCount < 3; retryCount++) {
-                    lockAcquired = redisCacheMediaCoreService.tryLockMediaCore(mediaId, requestId);
-                    if (lockAcquired) {
-                        // 获取锁成功，启动后台线程自动续期（WatchDog机制）
-                        // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
-                        lockRenewalExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                            Thread t = new Thread(r, "lock-renewal-core-" + mediaId);
-                            t.setDaemon(true);
-                            return t;
-                        });
-                        final Long finalMediaId = mediaId;
-                        final String finalRequestId = requestId;
-                        lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                            boolean renewed = redisCacheMediaCoreService.renewLockMediaCore(finalMediaId, finalRequestId);
-                            if (!renewed) {
-                                log.warn("lock renewal failed for media core, lock may have been released mediaId={} requestId={}", finalMediaId, finalRequestId);
-                            }
-                        }, 0, 2, TimeUnit.SECONDS); // 立即开始，每2秒执行一次
-                        break; // 获取成功，跳出循环
-                    }
-                    // 获取锁失败，等待100ms后重试查询缓存
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        log.warn("lock retry interrupted for media core mediaId={}", mediaId);
-                        break;
-                    }
-                    // 重试查询缓存，可能其他线程已经写入
+            // 每个 mediaId 的锁托管都交给 AOP，业务只保留命中/降级分支
+            redisLockFacade.withMediaCoreLock(mediaId, lockCtx -> {
+                if (lockCtx.isLockAcquired()) {
+                    // 1) 持锁后做双重检测，优先使用缓存
                     Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
                     if (cachedMedia != null) {
-                        // 缓存已命中，加入结果
-                        cachedMediaMap.put(mediaId, cachedMedia);
-                        break; // 跳出重试循环
-                    }
-                }
-                
-                if (lockAcquired) {
-                    // 2. 获取到分布式锁后，再次查询缓存（双重检测）
-                    Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
-                    if (cachedMedia != null) {
-                        // 其他线程已经写入缓存，使用缓存数据
                         cachedMediaMap.put(mediaId, cachedMedia);
                     } else {
-                        // 3. 缓存仍未命中，从数据库查询并写入缓存
+                        // 2) 缓存仍未命中：查库并写回 media:core
                         queryAndWriteMediaCore(mediaId, cachedMediaMap);
                     }
-                } else {
-                    // 获取锁失败：先做一次最终缓存检查，避免持锁线程已经回填缓存，当前请求仍落到DB
-                    Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
-                    if (cachedMedia != null) {
-                        cachedMediaMap.put(mediaId, cachedMedia);
-                        continue;
-                    }
+                    return null;
+                }
 
-                    // 最终缓存检查仍未命中，降级查询数据库（不写入缓存）
-                    log.warn("listMedia failed to acquire lock for media core, falling back to direct DB query mediaId={}", mediaId);
-                    Media media = mediaMapper.selectById(mediaId);
-                    if (media != null && media.getState() != null && media.getState() == 0) {
-                        cachedMediaMap.put(mediaId, media);
-                    }
+                // 3) 未拿到锁：最终缓存检查 -> 降级查库（不回填）
+                Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
+                if (cachedMedia != null) {
+                    cachedMediaMap.put(mediaId, cachedMedia);
+                    return null;
                 }
-            } finally {
-                // 停止锁续期线程
-                if (lockRenewalExecutor != null) {
-                    lockRenewalExecutor.shutdown();
-                    try {
-                        // 等待最多1秒，确保续期任务完成
-                        if (!lockRenewalExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
-                            lockRenewalExecutor.shutdownNow();
-                        }
-                    } catch (InterruptedException e) {
-                        lockRenewalExecutor.shutdownNow();
-                        Thread.currentThread().interrupt();
-                    }
+
+                log.warn("listMedia failed to acquire lock for media core, falling back to direct DB query mediaId={}", mediaId);
+                Media media = mediaMapper.selectById(mediaId);
+                if (media != null && media.getState() != null && media.getState() == 0) {
+                    cachedMediaMap.put(mediaId, media);
                 }
-                // 释放分布式锁
-                if (lockAcquired) {
-                    redisCacheMediaCoreService.unlockMediaCore(mediaId, requestId);
-                }
-            }
+                return null;
+            });
         }
     }
 

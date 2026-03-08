@@ -17,6 +17,7 @@ import com.dragons.core.service.MediaLikePersistService;
 import com.dragons.core.service.OssStsService;
 import com.dragons.core.service.IUserService;
 import com.dragons.core.service.dbwrite.MediaDbWriteService;
+import com.dragons.core.lock.RedisLockFacade;
 import com.dragons.core.mq.MediaLikeEventSender;
 import com.dragons.core.storage.StorageService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -68,6 +69,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
     private final MediaLikeEventSender mediaLikeEventSender;
     private final OssStsService ossStsService;
     private final MediaDbWriteService mediaDbWriteService;
+    private final RedisLockFacade redisLockFacade;
 
     /**
      * 封面预签名URL有效期（秒）
@@ -104,7 +106,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                             MediaLikePersistService mediaLikePersistService,
                             MediaLikeEventSender mediaLikeEventSender,
                             OssStsService ossStsService,
-                            MediaDbWriteService mediaDbWriteService) {
+                            MediaDbWriteService mediaDbWriteService,
+                            RedisLockFacade redisLockFacade) {
         this.storageService = storageService;
         this.mediaVisibleService = mediaVisibleService;
         this.userService = userService;
@@ -115,6 +118,7 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         this.mediaLikeEventSender = mediaLikeEventSender;
         this.ossStsService = ossStsService;
         this.mediaDbWriteService = mediaDbWriteService;
+        this.redisLockFacade = redisLockFacade;
     }
 
     @Override
@@ -584,7 +588,6 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
         if (mediaId == null) {
             throw new BusinessException(ResponseCode.BAD_REQUEST);
         }
-        MediaDetailResult result = new MediaDetailResult();
         // 先查缓存，命中则从 Media 实体转换为 MediaDetailResult
         Media cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
         if (cachedMedia != null) {
@@ -594,118 +597,77 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
             return r;
         }
 
-        // 1. 缓存未命中，尝试获取分布式锁，防止缓存击穿
-        boolean lockAcquired = false;
-        // 生成唯一标识，防止误释放其他线程的锁
-        String requestId = UUID.randomUUID().toString();
-        // 锁续期线程池 
-        ScheduledExecutorService lockRenewalExecutor = null; 
         try {
-            // 1.1 尝试获取分布式锁（最多重试3次）
-            for (int retryCount = 0; retryCount < 3; retryCount++) {
-                lockAcquired = redisCacheMediaCoreService.tryLockMediaCore(mediaId, requestId);
-                if (lockAcquired) {
-                    // 获取锁成功，启动后台线程自动续期（WatchDog机制）
-                    // 锁TTL是5秒，每2秒续期一次，确保锁不会过期
-                    lockRenewalExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                        Thread t = new Thread(r, "lock-renewal-" + mediaId);
-                        t.setDaemon(true);
-                        return t;
-                    });
-                    final Long finalMediaId = mediaId;
-                    final String finalRequestId = requestId;
-                    lockRenewalExecutor.scheduleAtFixedRate(() -> {
-                        boolean renewed = redisCacheMediaCoreService.renewLockMediaCore(finalMediaId, finalRequestId);
-                        if (!renewed) {
-                            log.warn("lock renewal failed, lock may have been released mediaId={} requestId={}", finalMediaId, finalRequestId);
-                        }
-                        // 立即开始，每2秒执行一次
-                    }, 0, 2, TimeUnit.SECONDS);
-                    break; // 获取成功，跳出循环
-                }
-                // 1.2 获取锁失败，等待100ms后重试查询缓存
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    log.warn("lock retry interrupted mediaId={}", mediaId);
-                    break;
-                }
-                // 1.3 重试查询缓存，可能其他线程已经写入
-                cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
-                if (cachedMedia != null) {
-                    // 1.4 缓存已命中，直接返回
-                    MediaDetailResult r = convertToMediaDetailResult(cachedMedia);
-                    r.likeCount = resolveLikeCount(mediaId, cachedMedia);
+            // 通过锁门面执行：切面统一处理“获取锁 + watchdog续期 + finally释放锁”
+            return redisLockFacade.withMediaCoreLock(mediaId, lockCtx -> {
+                Media cachedInLock = redisCacheMediaCoreService.getMediaCore(mediaId);
+                if (cachedInLock != null) {
+                    MediaDetailResult r = convertToMediaDetailResult(cachedInLock);
+                    r.likeCount = resolveLikeCount(mediaId, cachedInLock);
                     return r;
-                }
-            }
-            
-            if (lockAcquired) {
-                // 2.获取到分布式锁后，再次查询缓存（双重检测）
-                cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
-                if (cachedMedia != null) {
-                    // 其他线程已经写入缓存，直接返回
-                    MediaDetailResult r = convertToMediaDetailResult(cachedMedia);
-                    r.likeCount = resolveLikeCount(mediaId, cachedMedia);
-                    return r;
-                }
-                
-                // 3.缓存仍未命中，从数据库查询
-                Media media = this.getById(mediaId);
-                if (media == null || media.getState() == null) {
-                    // 3.1 防止缓存穿透：写入空值缓存
-                    redisCacheMediaCoreService.putNullValue(mediaId);
-                    throw new BusinessException(ResponseCode.NOT_FOUND);
                 }
 
-                // 验证media_state，防止未公开的media被错误的访问到
-                // 访问规则：
-                // - 游客/非上传者：仅允许查看 state=0（已审核通过）
-                // - 上传者本人：允许查看 state=0/2/6/7（2=上传成功；6/7=待审核/驳回便于查看原因；state=1 上传中不可见）
-                // - 审核者：允许查看 state=6/7（审核流程中的预览）
-                byte state = media.getState();
-                if (state != 0) {
-                    boolean isOwner = currentUserId != null
-                            && media.getUploaderId() != null
-                            && media.getUploaderId().equals(currentUserId);
-                    // 审核者（作者/管理员）允许查看待审核/驳回媒体，用于审核流程中的预览
-                    boolean isAuditor = false;
-                    if (currentUserId != null) {
-                        try {
-                            validateAuditorPermission(currentUserId);
-                            isAuditor = true;
-                        } catch (BusinessException ignored) {
-                            // 非审核者：按“资源不存在”处理，避免泄露待审核资源
-                        }
+                if (lockCtx.isLockAcquired()) {
+                    // 2. 获取到分布式锁后，再次查询缓存（双重检测）
+                    Media doubleCheckMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
+                    if (doubleCheckMedia != null) {
+                        MediaDetailResult r = convertToMediaDetailResult(doubleCheckMedia);
+                        r.likeCount = resolveLikeCount(mediaId, doubleCheckMedia);
+                        return r;
                     }
-                    if (!((isOwner && (state == 2 || state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
-                        log.warn("getMediaDetail denied because media has not got approved mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
-                        // 防止缓存穿透：对于无权限访问的数据，也写入空值缓存
+
+                    // 3. 缓存仍未命中，从数据库查询
+                    Media media = this.getById(mediaId);
+                    if (media == null || media.getState() == null) {
+                        // 3.1 防止缓存穿透：写入空值缓存
                         redisCacheMediaCoreService.putNullValue(mediaId);
                         throw new BusinessException(ResponseCode.NOT_FOUND);
                     }
+
+                    // 验证media_state，防止未公开的media被错误的访问到
+                    // 访问规则：
+                    // - 游客/非上传者：仅允许查看 state=0（已审核通过）
+                    // - 上传者本人：允许查看 state=0/2/6/7（2=上传成功；6/7=待审核/驳回便于查看原因；state=1 上传中不可见）
+                    // - 审核者：允许查看 state=6/7（审核流程中的预览）
+                    byte state = media.getState();
+                    if (state != 0) {
+                        boolean isOwner = currentUserId != null
+                                && media.getUploaderId() != null
+                                && media.getUploaderId().equals(currentUserId);
+                        // 审核者（作者/管理员）允许查看待审核/驳回媒体，用于审核流程中的预览
+                        boolean isAuditor = false;
+                        if (currentUserId != null) {
+                            try {
+                                validateAuditorPermission(currentUserId);
+                                isAuditor = true;
+                            } catch (BusinessException ignored) {
+                                // 非审核者：按“资源不存在”处理，避免泄露待审核资源
+                            }
+                        }
+                        if (!((isOwner && (state == 2 || state == 6 || state == 7)) || (isAuditor && (state == 6 || state == 7)))) {
+                            log.warn("getMediaDetail denied because media has not got approved mediaId={} currentUserId={} reason=state_not_allowed state={}", mediaId, currentUserId, state);
+                            // 防止缓存穿透：对于无权限访问的数据，也写入空值缓存
+                            redisCacheMediaCoreService.putNullValue(mediaId);
+                            throw new BusinessException(ResponseCode.NOT_FOUND);
+                        }
+                    }
+
+                    // 转换为 MediaDetailResult（会自动处理 coverUrl）
+                    MediaDetailResult result = convertToMediaDetailResult(media);
+                    result.likeCount = resolveLikeCount(mediaId, media);
+                    // 仅 state=0（已审核通过）时写入缓存，供后续游客查询命中
+                    if (media.getState() != null && media.getState() == 0) {
+                        media.setCoverUrl(result.coverUrl);
+                        redisCacheMediaCoreService.putMediaCore(mediaId, media);
+                    }
+                    return result;
                 }
 
-                // 说明：
-                // “专区”只用于前端筛选展示，不用于做权限控制。
-                // 因此详情不做专区校验：只要资源存在且 state=0，就允许查看详情。
-
-                // 转换为 MediaDetailResult（会自动处理 coverUrl）
-                result = convertToMediaDetailResult(media);
-                result.likeCount = resolveLikeCount(mediaId, media);
-                // 仅 state=0（已审核通过）时写入缓存，供后续游客查询命中
-                // 将 coverUrl 设置到 Media 对象中，一起缓存
-                if (media.getState() != null && media.getState() == 0) {
-                    media.setCoverUrl(result.coverUrl);
-                    redisCacheMediaCoreService.putMediaCore(mediaId, media);
-                }
-            } else {
                 // 获取锁失败：先做一次最终缓存检查，避免持锁线程已经回填缓存，当前请求仍落到DB
-                cachedMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
-                if (cachedMedia != null) {
-                    MediaDetailResult r = convertToMediaDetailResult(cachedMedia);
-                    r.likeCount = resolveLikeCount(mediaId, cachedMedia);
+                Media finalCheckMedia = redisCacheMediaCoreService.getMediaCore(mediaId);
+                if (finalCheckMedia != null) {
+                    MediaDetailResult r = convertToMediaDetailResult(finalCheckMedia);
+                    r.likeCount = resolveLikeCount(mediaId, finalCheckMedia);
                     return r;
                 }
 
@@ -714,8 +676,8 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                 if (media == null || media.getState() == null) {
                     throw new BusinessException(ResponseCode.NOT_FOUND);
                 }
-                
-                // 访问规则校验（与上方持锁分支一致：上传者可看 2/6/7，state=1 不可见；审核者可看 6/7）
+
+                // 访问规则校验（与持锁分支一致：上传者可看 2/6/7，state=1 不可见；审核者可看 6/7）
                 byte state = media.getState();
                 if (state != 0) {
                     boolean isOwner = currentUserId != null
@@ -733,39 +695,19 @@ public class MediaServiceImpl extends ServiceImpl<MediaMapper, Media> implements
                         throw new BusinessException(ResponseCode.NOT_FOUND);
                     }
                 }
-                
-                // 转换为 MediaDetailResult（会自动处理 coverUrl）
-                result = convertToMediaDetailResult(media);
+
+                MediaDetailResult result = convertToMediaDetailResult(media);
                 result.likeCount = resolveLikeCount(mediaId, media);
                 // 注意：获取锁失败时，不写入缓存，避免并发写入问题
-            }
+                return result;
+            });
         } catch (BusinessException e) {
             // 业务异常直接抛出
             throw e;
         } catch (Exception e) {
             log.error("get media detail failed mediaId={}", mediaId, e);
             throw new BusinessException(ResponseCode.INTERNAL_SERVER_ERROR);
-        } finally {
-            // 停止续期线程
-            if (lockRenewalExecutor != null) {
-                lockRenewalExecutor.shutdown();
-                try {
-                    // 等待续期线程停止（最多等待1秒）
-                    if (!lockRenewalExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
-                        lockRenewalExecutor.shutdownNow(); // 强制停止
-                    }
-                } catch (InterruptedException e) {
-                    lockRenewalExecutor.shutdownNow();
-                    Thread.currentThread().interrupt();
-                }
-            }
-            // 只有获取到锁才释放（使用 requestId 确保只释放自己的锁）
-            if (lockAcquired) {
-                redisCacheMediaCoreService.unlockMediaCore(mediaId, requestId);
-            }
         }
-
-        return result;
     }
 
     @Override
